@@ -1,0 +1,7 @@
+outs:
+- md5: a8b1d2c462d2bee93ae50363d794c40d.dir
+  path: MNIST
+
+# Comments and user metadata are supported.
+meta:
+  name: 'MNIST train and test' 
