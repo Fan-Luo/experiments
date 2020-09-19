@@ -1,4 +1,4 @@
 [core]
-    remote = myremote
-['remote "myremote"']
-    url = /xdisk/msurdeanu/fanluo/hotpotQA/logs
+    remote = gdrive
+['remote "gdrive"']
+    url = gdrive://18gYJNBgJQGSk3GmJ62Z3CXSxgewOSg1f
