@@ -727,7 +727,7 @@ class hotpotqa(pl.LightningModule):
         input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para, qids = batch 
         output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para)
         answer_loss, type_loss, sp_para_loss, sp_sent_loss  = output[:4]
-        loss  = answer_loss +  type_loss + sp_para_loss + sp_sent_loss
+        loss = answer_loss + 5 * type_loss + 10 * sp_para_loss + 10 * sp_sent_loss
         lr = loss.new_zeros(1) + self.trainer.optimizers[0].param_groups[0]['lr']  # loss.new_zeros(1) is tensor([0.]), converting 'lr' to tensor' by adding it. 
         tensorboard_logs = {'train_answer_loss': answer_loss, 'train_type_loss': type_loss, 'train_sp_para_loss': sp_para_loss, 'train_sp_sent_loss': sp_sent_loss, 'lr': lr,  
                             'input_size': torch.tensor(input_ids.numel()).type_as(loss) ,
@@ -1116,7 +1116,7 @@ def main(args):
     num_devices = len(args.gpus) #1 or len(args.gpus)
     train_set_size = 90447 * args.train_percent    # hardcode dataset size. Needed to compute number of steps for the lr scheduler
     args.steps = args.epochs * train_set_size / (args.batch_size * num_devices)
-    args.warmup = int(train_set_size / 10)
+    args.warmup = min(1000, 1/1000 * args.steps)
     print(f'>>>>>>> #train_set_size: {train_set_size}, #steps: {args.steps}, #epochs: {args.epochs}, batch_size: {args.batch_size * num_devices} <<<<<<<')
 
     trainer = pl.Trainer(gpus=args.gpus, distributed_backend='ddp' if args.gpus and (len(args.gpus) > 1) else None,
