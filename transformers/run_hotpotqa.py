@@ -437,9 +437,13 @@ class hotpotqa(pl.LightningModule):
         self.num_labels = 2
         self.qa_outputs = torch.nn.Linear(self.model.config.hidden_size, self.num_labels)
         
+        self.dense_type = torch.nn.Linear(self.model.config.hidden_size, self.model.config.hidden_size)
         self.linear_type = torch.nn.Linear(self.model.config.hidden_size, 3)   #  question type (yes/no/span) classification  
-        self.linear_sp_sent = torch.nn.Linear(self.model.config.hidden_size, 1)     
+        self.dense_sp_sent = torch.nn.Linear(self.model.config.hidden_size, self.model.config.hidden_size)	
+        self.linear_sp_sent = torch.nn.Linear(self.model.config.hidden_size, 1)    	
+        self.dense_sp_para = torch.nn.Linear(self.model.config.hidden_size, self.model.config.hidden_size)
         self.linear_sp_para = torch.nn.Linear(self.model.config.hidden_size, 1) 
+        
         self.train_dataloader_object = self.val_dataloader_object  = None  # = self.test_dataloader_object = None
     
     def load_model(self):
@@ -522,18 +526,12 @@ class hotpotqa(pl.LightningModule):
         attention_mask = torch.ones(input_ids.shape, dtype=torch.long, device=input_ids.device)
         
         # global attention for the cls and all question tokens
-        question_end_index = self._get_special_index(input_ids, "</q>")
-        if(question_end_index.size(0) == 1):
-            attention_mask[:,:question_end_index.item()] = 2  # from <cls> until </q>  
-        else:
-            attention_mask[:,:question_end_index[0].item() ] = 2
-            print("more than 1 <q> in: ", self.tokenizer.convert_ids_to_tokens(input_ids[0].tolist()) )
+        question_end_index = self._get_special_index(input_ids, ["</q>"]) 
+        attention_mask[:,:question_end_index[0].item()] = 2  # from <cls> until </q>
+        
         # global attention for the sentence and paragraph special tokens  
-        p_index = self._get_special_index(input_ids, "<p>") 
-        attention_mask[:, p_index] = 2
-              
-        s_index = self._get_special_index(input_ids, "<s>") 
-        attention_mask[:, s_index] = 2 
+        sent_indexes = self._get_special_index(input_ids, ["<p>", "<s>"])
+        attention_mask[:, sent_indexes] = 2
 
         # sliding_chunks implemenation of selfattention requires that seqlen is multiple of window size
         input_ids, attention_mask = pad_to_window_size(
@@ -559,30 +557,37 @@ class hotpotqa(pl.LightningModule):
         end_logits = end_logits.squeeze(-1)
  
         ### 2. type classification, similar as class LongformerClassificationHead(nn.Module) https://huggingface.co/transformers/_modules/transformers/modeling_longformer.html#LongformerForSequenceClassification.forward ### 
-        type_logits = self.linear_type(sequence_output[:,0])
-
+        type_logits = self.dense_type(sequence_output[:,0])	
+        # Non-linearity	
+        type_logits = torch.tanh(type_logits)  	
+        type_logits = self.linear_type(type_logits)
+        
         
         ### 3. supporting paragraph classification ### 
-        sp_para_output = sequence_output[:,p_index,:] 
-        sp_para_output_t = self.linear_sp_para(sp_para_output) 
-        
-        # linear_sp_sent generates a single score for each sentence, instead of 2 scores for yes and no. 
+        p_index = self._get_special_index(input_ids, ["<p>"])
+        sp_para_output = sequence_output[:,p_index,:]   
+        sp_para_output_t = self.dense_sp_para(sp_para_output)  	
+        # Non-linearity	
+        sp_para_output_t = torch.tanh(sp_para_output_t)  	
+        sp_para_output_t = self.linear_sp_para(sp_para_output_t) 
+
+        # linear_sp_sent generates a single score for each sentence, instead of 2 scores for yes and no. 	
         # Argument the score with additional score=0. The same way did in the HOTPOTqa paper
-        sp_para_output_aux = torch.zeros(sp_para_output_t.shape, dtype=torch.float, device=sp_para_output_t.device)  
+        sp_para_output_aux = torch.zeros(sp_para_output_t.shape, dtype=torch.float, device=sp_para_output_t.device) 
         predict_support_para = torch.cat([sp_para_output_aux, sp_para_output_t], dim=-1).contiguous() 
-            
-        ### 4. supporting fact classification ###     
-        # the first sentence in a paragraph is leading by <p>, other sentences are leading by <s>
-        sent_indexes = torch.sort(torch.cat((s_index, p_index)))[0] # torch.sort returns a 'torch.return_types.sort' object has 2 items: values, indices
-        sp_sent_output = sequence_output[:,sent_indexes,:] 
-        sp_sent_output_t = self.linear_sp_sent(sp_sent_output) 
  
-        sp_sent_output_aux = torch.zeros(sp_sent_output_t.shape, dtype=torch.float, device=sp_sent_output_t.device)  
+        ### 4. supporting fact classification ###     
+        sp_sent_output = sequence_output[:,sent_indexes,:]
+        sp_sent_output_t = self.dense_sp_sent(sp_sent_output)   	
+        # Non-linearity	
+        sp_sent_output_t = torch.tanh(sp_sent_output_t)    	
+        sp_sent_output_t = self.linear_sp_sent(sp_sent_output_t) 
+        sp_sent_output_aux = torch.zeros(sp_sent_output_t.shape, dtype=torch.float, device=sp_sent_output_t.device) 
         predict_support_sent = torch.cat([sp_sent_output_aux, sp_sent_output_t], dim=-1).contiguous() 
         
-        outputs = (start_logits, end_logits, type_logits, sp_para_output_t, sp_sent_output_t)  
+        outputs = (start_logits, end_logits, type_logits, sp_para_output_t, sp_sent_output_t)
         answer_loss, type_loss, sp_para_loss, sp_sent_loss  = self.loss_computation(start_positions, end_positions, start_logits, end_logits, q_type, type_logits, sp_para, predict_support_para, sp_sent, predict_support_sent)
- 
+
         outputs = (answer_loss, type_loss, sp_para_loss, sp_sent_loss,) + outputs    
         return outputs
     
@@ -598,65 +603,64 @@ class hotpotqa(pl.LightningModule):
                 # loss function suggested in section 2.2 here https://arxiv.org/pdf/1710.10723.pdf
                 # NOTE: this returns sum of losses, not mean, so loss won't be normalized across different batch sizes
                 # but batch size is always 1, so this is not a problem
-                start_loss = self.or_softmax_cross_entropy_loss_one_doc(start_logits, start_positions, ignore_index=-1)
-                end_loss = self.or_softmax_cross_entropy_loss_one_doc(end_logits, end_positions, ignore_index=-1) 
-                type_loss = self.or_softmax_cross_entropy_loss_one_doc(type_logits, q_type.unsqueeze(0), ignore_index=-1)
- 
-                # only one example per batch, instead treating each example as a row, after squeeze, each para / sentence is a row
-                sp_para_loss = self.or_softmax_cross_entropy_loss_one_doc(predict_support_para.squeeze(), sp_para.squeeze().unsqueeze(-1), ignore_index=-1)
-                sp_sent_loss = self.or_softmax_cross_entropy_loss_one_doc(predict_support_sent.squeeze(), sp_sent.squeeze().unsqueeze(-1), ignore_index=-1)
-        
-            else:
-                loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-1)
+                start_loss = self.or_softmax_cross_entropy_loss_one_doc(start_logits, start_positions, ignore_index=-1) 
+                end_loss = self.or_softmax_cross_entropy_loss_one_doc(end_logits, end_positions, ignore_index=-1)
+
+            else: 
                 start_positions = start_positions[:, 0:1]   # only use the top1 start_position considering only one appearance of the answer string
                 end_positions = end_positions[:, 0:1]
-                start_loss = loss_fct(start_logits, start_positions[:, 0])
-                end_loss = loss_fct(end_logits, end_positions[:, 0])
-                type_loss = loss_fct(type_logits, q_type)  
-                
-                nll_average = torch.nn.CrossEntropyLoss(size_average=True, ignore_index=-1)
-                sp_para_loss = nll_average(predict_support_para.view(-1, 2), sp_para.view(-1))
-                sp_sent_loss = nll_average(predict_support_sent.view(-1, 2), sp_sent.view(-1))
+                start_loss = crossentropy(start_logits, start_positions[:, 0])
+                end_loss = crossentropy(end_logits, end_positions[:, 0])
+                 
+            crossentropy = torch.nn.CrossEntropyLoss(ignore_index=-1)
+            type_loss = crossentropy(type_logits, q_type)  
+            
+            crossentropy_average = torch.nn.CrossEntropyLoss(reduction = 'mean', ignore_index=-1)      
+            sp_para_loss = crossentropy_average(predict_support_para.view(-1, 2), sp_para.view(-1))
+            sp_sent_loss = crossentropy_average(predict_support_sent.view(-1, 2), sp_sent.view(-1))      
                 
             answer_loss = (start_loss + end_loss) / 2 
-            
         return answer_loss, type_loss, sp_para_loss, sp_sent_loss  
 
-  
-    def _get_special_index(self, input_ids, special_token):
-        assert(input_ids.size(0)==1)
-        token_indices =  torch.nonzero(input_ids == self.tokenizer.convert_tokens_to_ids(special_token))
-        ### FOR DEBUG ###
-        # input_ids = torch.tensor([[0.6, 0.0, 0.6, 0.0]]) 
-        # token_indices =  torch.nonzero(input_ids == torch.tensor(0.6))
+ 
+    def _get_special_index(self, input_ids, special_tokens):
+        assert(input_ids.size(0)==1) 
+        mask = input_ids != input_ids # initilaize 
+        for special_token in special_tokens:
+            mask = torch.logical_or(mask, input_ids.eq(self.tokenizer.convert_tokens_to_ids(special_token)))  
+        token_indices = torch.nonzero(mask)    
+        
         return token_indices[:,1]    
 
     def or_softmax_cross_entropy_loss_one_doc(self, logits, target, ignore_index=-1, dim=-1):
         """loss function suggested in section 2.2 here https://arxiv.org/pdf/1710.10723.pdf"""
         assert logits.ndim == 2
         assert target.ndim == 2
-        assert logits.size(0) == target.size(0)
-
+        assert logits.size(0) == target.size(0) 
+        
         # with regular CrossEntropyLoss, the numerator is only one of the logits specified by the target, considing only one correct target 
         # here, the numerator is the sum of a few potential targets, where some of them is the correct answer, considing more correct targets
 
         # target are indexes of tokens, padded with ignore_index=-1
         # logits are scores (one for each label) for each token
 
-
         # compute a target mask
         target_mask = target == ignore_index
         # replaces ignore_index with 0, so `gather` will select logit at index 0 for the masked targets
-        masked_target = target * (1 - target_mask.long())                 # replace all -1 in target with 0， tensor([[447,   0,   0,   0, ...]]) 
+        masked_target = target * (1 - target_mask.long())                   
         # gather logits
-        gathered_logits = logits.gather(dim=dim, index=masked_target)     # tensor([[0.4382, 0.2340, 0.2340, 0.2340 ... ]]), padding logits are all replaced by logits[0] 
+        gathered_logits = logits.gather(dim=dim, index=masked_target)   
+        
         # Apply the mask to gathered_logits. Use a mask of -inf because exp(-inf) = 0
-        gathered_logits[target_mask] = float('-inf')                      # padding logits are all replaced by -inf
+        gathered_logits[target_mask] = float('-inf')                      # padding logits are all replaced by -inf    tensor([[0.4382,   -inf,   -inf,   -inf,   -inf,...]])
         
         # each batch is one example
         gathered_logits = gathered_logits.view(1, -1)
         logits = logits.view(1, -1)
-        log_score = torch.logsumexp(gathered_logits, dim=dim, keepdim=False) 
+
+        # numerator = log(sum(exp(gathered logits)))
+        log_score = torch.logsumexp(gathered_logits, dim=dim, keepdim=False)
+
         # denominator = log(sum(exp(logits)))
         log_norm = torch.logsumexp(logits, dim=dim, keepdim=False) 
         
@@ -665,9 +669,7 @@ class hotpotqa(pl.LightningModule):
         
         # some of the examples might have a loss of `inf` when `target` is all `ignore_index`: when computing start_loss and end_loss for question with the gold answer of yes/no 
         # when `target` is all `ignore_index`, loss is 0 
-        loss = loss[~torch.isinf(loss)].sum()
-        loss = torch.tanh(loss)
-        
+        loss = loss[~torch.isinf(loss)].sum() 
         return loss 
  
 
@@ -781,20 +783,20 @@ class hotpotqa(pl.LightningModule):
 
 
     def decode(self, input_ids, start_logits, end_logits, type_logits, sp_para_logits, sp_sent_logits):
-        
-        question_end_index = self._get_special_index(input_ids, "</q>") 
 
+        question_end_index = self._get_special_index(input_ids, ["</q>"]) 
+        
         # one example per batch
         start_logits = start_logits.squeeze()
-        end_logits = end_logits.squeeze()
-        start_logits_indices = start_logits.topk(k=self.args.n_best_size, dim=-1).indices
+        end_logits = end_logits.squeeze() 
+        start_logits_indices = start_logits.topk(k=self.args.n_best_size, dim=-1).indices 
         end_logits_indices = end_logits.topk(k=self.args.n_best_size, dim=-1).indices 
         if(len(start_logits_indices.size()) > 1):
             print("len(start_logits_indices.size()): ", len(start_logits_indices.size()))
             assert("len(start_logits_indices.size()) > 1")
         p_type = torch.argmax(type_logits, dim=1).item()
-        p_type_score = torch.max(type_logits, dim=1)[0]
- 
+        p_type_score = torch.max(type_logits, dim=1)[0]  
+        
         answers = []
         if p_type == 0:
             potential_answers = []
@@ -812,38 +814,36 @@ class hotpotqa(pl.LightningModule):
                     potential_answers.append({'start': start_logit_index, 'end': end_logit_index,
                                               'start_logit': start_logits[start_logit_index],  # single logit score for start position at start_logit_index
                                               'end_logit': end_logits[end_logit_index]})    
-            sorted_answers = sorted(potential_answers, key=lambda x: (x['start_logit'] + x['end_logit']), reverse=True) 
- 
+            sorted_answers = sorted(potential_answers, key=lambda x: (x['start_logit'] + x['end_logit']), reverse=True)  
             if len(sorted_answers) == 0:
                 answers.append({'text': 'NoAnswerFound', 'score': -1000000})
             else:
                 answer = sorted_answers[0]
                 answer_token_ids = input_ids[0, answer['start']: answer['end'] + 1]
                 answer_tokens = self.tokenizer.convert_ids_to_tokens(answer_token_ids.tolist())
-                text = self.tokenizer.convert_tokens_to_string(answer_tokens)
+                text = self.tokenizer.convert_tokens_to_string(answer_tokens) 
                 score = (torch.sigmoid(answer['start_logit']) + torch.sigmoid(answer['end_logit']) + torch.sigmoid(p_type_score)) / 3
                 answers.append({'text': text, 'score': score})
+                print("answers: " + str(answers))
         elif p_type == 1: 
             answers.append({'text': 'yes', 'score': p_type_score})
         elif p_type == 2:
             answers.append({'text': 'no', 'score': p_type_score})
         else:
             assert False 
-
-        p_index = self._get_special_index(input_ids, "<p>") 
-        s_index = self._get_special_index(input_ids, "<s>") 
-        sent_indexes = torch.sort(torch.cat((s_index, p_index)))[0]
+    
+        p_index = self._get_special_index(input_ids, ["<p>"]) 
+        sent_indexes = self._get_special_index(input_ids, ["<p>", "<s>"])
         
         s_to_p_map = []
         for s in sent_indexes:
             s_to_p = torch.where(torch.le(p_index, s))[0][-1]     # last p_index smaller or equal to s
             s_to_p_map.append(s_to_p.item())  
-         
-        sp_para_top2 = sp_para_logits.squeeze().topk(k=2).indices 
+        sp_para_top2 = sp_para_logits.squeeze().topk(k=2).indices
         if(sp_sent_logits.squeeze().size(0) > 12):
             sp_sent_top12 = sp_sent_logits.squeeze().topk(k=12).indices
         else:
-            sp_sent_top12 = sp_sent_logits.squeeze().topk(k=sp_sent_logits.squeeze().size(0)).indices
+            sp_sent_top12 = sp_sent_logits.squeeze().topk(k=sp_sent_logits.squeeze().size(0)).indices 
         
         sp_sent_pred = set()
         sp_para_pred = set()
@@ -851,8 +851,7 @@ class hotpotqa(pl.LightningModule):
             sp_sent_to_para = s_to_p_map[sp_sent.item()]
             if sp_sent_to_para in sp_para_top2:
                 sp_sent_pred.add(sp_sent.item())
-                sp_para_pred.add(sp_sent_to_para) 
- 
+                sp_para_pred.add(sp_sent_to_para)  
         return (answers, sp_sent_pred, sp_para_pred)
 
     def normalize_answer(self, s):
