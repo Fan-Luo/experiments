@@ -437,11 +437,8 @@ class hotpotqa(pl.LightningModule):
         self.num_labels = 2
         self.qa_outputs = torch.nn.Linear(self.model.config.hidden_size, self.num_labels)
         
-        self.dense_type = torch.nn.Linear(self.model.config.hidden_size, self.model.config.hidden_size)
-        self.linear_type = torch.nn.Linear(self.model.config.hidden_size, 3)   #  question type (yes/no/span) classification 
-        self.dense_sp_sent = torch.nn.Linear(self.model.config.hidden_size, self.model.config.hidden_size)
-        self.linear_sp_sent = torch.nn.Linear(self.model.config.hidden_size, 1)    
-        self.dense_sp_para = torch.nn.Linear(self.model.config.hidden_size, self.model.config.hidden_size)
+        self.linear_type = torch.nn.Linear(self.model.config.hidden_size, 3)   #  question type (yes/no/span) classification  
+        self.linear_sp_sent = torch.nn.Linear(self.model.config.hidden_size, 1)     
         self.linear_sp_para = torch.nn.Linear(self.model.config.hidden_size, 1) 
         self.train_dataloader_object = self.val_dataloader_object  = None  # = self.test_dataloader_object = None
     
@@ -562,20 +559,12 @@ class hotpotqa(pl.LightningModule):
         end_logits = end_logits.squeeze(-1)
  
         ### 2. type classification, similar as class LongformerClassificationHead(nn.Module) https://huggingface.co/transformers/_modules/transformers/modeling_longformer.html#LongformerForSequenceClassification.forward ### 
-   
-        type_logits = self.dense_type(sequence_output[:,0])
-        # Non-linearity
-        type_logits = torch.tanh(type_logits)  
-        type_logits = self.linear_type(type_logits)
+        type_logits = self.linear_type(sequence_output[:,0])
 
         
         ### 3. supporting paragraph classification ### 
         sp_para_output = sequence_output[:,p_index,:] 
-              
-        sp_para_output_t = self.dense_sp_para(sp_para_output)  
-        # Non-linearity
-        sp_para_output_t = torch.tanh(sp_para_output_t)  
-        sp_para_output_t = self.linear_sp_para(sp_para_output_t) 
+        sp_para_output_t = self.linear_sp_para(sp_para_output) 
         
         # linear_sp_sent generates a single score for each sentence, instead of 2 scores for yes and no. 
         # Argument the score with additional score=0. The same way did in the HOTPOTqa paper
@@ -586,11 +575,7 @@ class hotpotqa(pl.LightningModule):
         # the first sentence in a paragraph is leading by <p>, other sentences are leading by <s>
         sent_indexes = torch.sort(torch.cat((s_index, p_index)))[0] # torch.sort returns a 'torch.return_types.sort' object has 2 items: values, indices
         sp_sent_output = sequence_output[:,sent_indexes,:] 
-        
-        sp_sent_output_t = self.dense_sp_sent(sp_sent_output)   
-        # Non-linearity
-        sp_sent_output_t = torch.tanh(sp_sent_output_t)    
-        sp_sent_output_t = self.linear_sp_sent(sp_sent_output_t) 
+        sp_sent_output_t = self.linear_sp_sent(sp_sent_output) 
  
         sp_sent_output_aux = torch.zeros(sp_sent_output_t.shape, dtype=torch.float, device=sp_sent_output_t.device)  
         predict_support_sent = torch.cat([sp_sent_output_aux, sp_sent_output_t], dim=-1).contiguous() 
@@ -1118,7 +1103,8 @@ def main(args):
     num_devices = len(args.gpus) #1 or len(args.gpus)
     train_set_size = 90447 * args.train_percent    # hardcode dataset size. Needed to compute number of steps for the lr scheduler
     args.steps = args.epochs * train_set_size / (args.batch_size * num_devices)
-    args.warmup = max(400, 1/4 * args.steps)
+
+     
     print(f'>>>>>>> #train_set_size: {train_set_size}, #steps: {args.steps}, #epochs: {args.epochs}, batch_size: {args.batch_size * num_devices} <<<<<<<')
 
     trainer = pl.Trainer(gpus=args.gpus, distributed_backend='ddp' if args.gpus and (len(args.gpus) > 1) else None,
