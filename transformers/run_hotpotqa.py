@@ -758,7 +758,7 @@ class hotpotqa(pl.LightningModule):
         if(len(sp_sent_pred) > 0):
             sp_sent_em, sp_sent_precision, sp_sent_recall, sp_sent_f1 = self.sp_metrics(sp_sent_pred, torch.where(sp_sent.squeeze())[0].tolist())
             sp_sent_em = torch.tensor(sp_sent_em).type_as(loss)
-            sp_sent_precision = torch.tensor(sp_sent_em).type_as(loss)
+            sp_sent_precision = torch.tensor(sp_sent_precision).type_as(loss)
             sp_sent_recall = torch.tensor(sp_sent_recall).type_as(loss)
             sp_sent_f1 = torch.tensor(sp_sent_f1).type_as(loss)
 
@@ -824,7 +824,7 @@ class hotpotqa(pl.LightningModule):
                 text = self.tokenizer.convert_tokens_to_string(answer_tokens) 
                 score = (torch.sigmoid(answer['start_logit']) + torch.sigmoid(answer['end_logit']) + torch.sigmoid(p_type_score)) / 3
                 answers.append({'text': text, 'score': score})
-                print("answers: " + str(answers))
+                # print("answers: " + str(answers))
         elif p_type == 1: 
             answers.append({'text': 'yes', 'score': p_type_score})
         elif p_type == 2:
