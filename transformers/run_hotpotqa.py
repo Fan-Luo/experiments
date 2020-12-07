@@ -97,25 +97,21 @@ def convert_hotpot_to_squad_format(json_dict, gold_paras_only=False):
         # extra space is fine, which would be ignored latter. most sentences has already have heading space, there are several no heading space; call the normalize_answer() which is same as the one used during evaluation
    
         context = " ".join(contexts)  
-#         print(context)
+        answer = normalize_answer(example["answer"])  
         
-#         exit(0)
-
- 
-        answer = normalize_answer(example["answer"]) 
-    
-        new_dict["data"].append(
-            create_para_dict(
-                create_example_dict(
-                    context=context,
-                    answer=answer,
-                    id = example["_id"],
-                    question=example["question"],
-                    is_sup_fact = is_sup_fact,
-                    is_supporting_para = is_supporting_para 
+        if(len(answer) > 0):   # answer can be '' after normalize
+            new_dict["data"].append(
+                create_para_dict(
+                    create_example_dict(
+                        context=context,
+                        answer=answer,
+                        id = example["_id"],
+                        question=normalize_answer(example["question"]),
+                        is_sup_fact = is_sup_fact,
+                        is_supporting_para = is_supporting_para 
+                    )
                 )
-            )
-        ) 
+            ) 
 #     print("number of questions with answer not found in context: ", num_null_answer)
 #     print("number of questions with answer 'yes': ", num_yes_answer)
 #     print("number of questions with answer 'no': ", num_no_answer)
@@ -274,6 +270,9 @@ class hotpotqaDataset(Dataset):
         def map_answer_positions(char_to_word_offset, orig_to_tok_index, answer_start, answer_end, slice_start, slice_end, doc_offset):
             
             # char offset to word offset
+            if(answer_start >= len(char_to_word_offset)):
+                print("answer_start: ", answer_start)
+                print("len(char_to_word_offset): ", len(char_to_word_offset))
             start_word_position = char_to_word_offset[answer_start]
             end_word_position = char_to_word_offset[answer_end-1] 
 
@@ -392,7 +391,7 @@ class hotpotqaDataset(Dataset):
                     end_positions = []
  
                     answer = qa["answer"] 
-                    # print("answer: ", answer)
+                    print("qa['id']: ", qa['id'])
                     if answer == 'yes':
                         q_type = 1
                         start_positions.append(len(tokens)-4)   
