@@ -238,6 +238,7 @@ class hotpotqaDataset(Dataset):
         self.num_yes_answer = 0
         self.num_no_answer = 0
         self.num_null_answer = 0
+        self.num_empty_answer = 0
 
 #         print(tokenizer.all_special_tokens) 
     
@@ -399,7 +400,13 @@ class hotpotqaDataset(Dataset):
  
                     answer = qa["answer"] 
                     # print("qa['id']: ", qa['id'])
-                    if answer == 'yes':
+                    if answer == '':
+                        q_type = -1
+                        start_positions.append(-1)   
+                        end_positions.append(-1)
+                        self.num_empty_answer += 1                       
+                    
+                    elif answer == 'yes':
                         q_type = 1
                         start_positions.append(len(tokens)-4)   
                         end_positions.append(len(tokens)-4)
@@ -520,33 +527,33 @@ class hotpotqa(pl.LightningModule):
         self.linear_type = torch.nn.Linear(self.model.config.hidden_size, 4)   #  question type (yes/no/span/null) classification 
            
        
-        self.fnn_sp_sent = torch.nn.Sequential(
-          torch.nn.Linear(self.model.config.hidden_size, self.model.config.hidden_size), 
-          torch.nn.GELU(),
-          torch.nn.Linear(self.model.config.hidden_size, 1),      # score for 'yes', while 0 for 'no'
-        )
+        # self.fnn_sp_sent = torch.nn.Sequential(
+        #   torch.nn.Linear(self.model.config.hidden_size, self.model.config.hidden_size), 
+        #   torch.nn.GELU(),
+        #   torch.nn.Linear(self.model.config.hidden_size, 1),      # score for 'yes', while 0 for 'no'
+        # )
         
-        self.fnn_sp_para = torch.nn.Sequential(
-          torch.nn.Linear(self.model.config.hidden_size, self.model.config.hidden_size), 
-          torch.nn.GELU(),
-          torch.nn.Linear(self.model.config.hidden_size, 1),      # score for 'yes', while 0 for 'no'
-        )
+        # self.fnn_sp_para = torch.nn.Sequential(
+        #   torch.nn.Linear(self.model.config.hidden_size, self.model.config.hidden_size), 
+        #   torch.nn.GELU(),
+        #   torch.nn.Linear(self.model.config.hidden_size, 1),      # score for 'yes', while 0 for 'no'
+        # )
          
         
         self.train_dataloader_object = self.val_dataloader_object = self.test_dataloader_object = None
     
     def load_model(self):
         
-        config = LongformerConfig.from_pretrained(self.args.model_path) 
-        config.attention_mode = self.args.attention_mode
-        model = Longformer.from_pretrained(self.args.model_path, config=config)
-        # model = Longformer.from_pretrained(self.args.model_path) 
+        # config = LongformerConfig.from_pretrained(self.args.model_path) 
+        # config.attention_mode = self.args.attention_mode
+        # model = Longformer.from_pretrained(self.args.model_path, config=config)
+        model = Longformer.from_pretrained(self.args.model_path) 
 
         for layer in model.encoder.layer:
             layer.attention.self.attention_mode = self.args.attention_mode
             self.args.attention_window = layer.attention.self.attention_window
 
-        print("Loaded model with config:")
+        # print("Loaded model with config:")
         print(model.config)
 
         for p in model.parameters():
@@ -609,7 +616,7 @@ class hotpotqa(pl.LightningModule):
         return self.test_dataloader_object
 
 #%%add_to hotpotqa  
-    def forward(self, input_ids, attention_mask, segment_ids, start_positions, end_positions, q_type, sp_sent, sp_para):
+    def forward(self, input_ids, attention_mask, segment_ids, start_positions, end_positions, q_type): #, sp_sent, sp_para):
  
         if(input_ids.size(0) > 1):
             assert("multi rows per document")
@@ -665,30 +672,35 @@ class hotpotqa(pl.LightningModule):
         ### 2. type classification, similar as class LongformerClassificationHead(nn.Module) https://huggingface.co/transformers/_modules/transformers/modeling_longformer.html#LongformerForSequenceClassification.forward ### 
         type_logits = self.linear_type(sequence_output[:,0]) 
         
-        ### 3. supporting paragraph classification ###  
-        sp_para_output = sequence_output[:,para_indexes,:]  
-        sp_para_output_t = self.fnn_sp_para(sp_para_output) 
+        # ### 3. supporting paragraph classification ###  
+        # sp_para_output = sequence_output[:,para_indexes,:]  
+        # sp_para_output_t = self.fnn_sp_para(sp_para_output) 
 
-         # linear_sp_sent generates a single score for each sentence, instead of 2 scores for yes and no.   
-        # Argument the score with additional score=0. The same way did in the HOTPOTqa paper
-        sp_para_output_aux = torch.zeros(sp_para_output_t.shape, dtype=torch.float, device=sp_para_output_t.device) 
-        predict_support_para = torch.cat([sp_para_output_aux, sp_para_output_t], dim=-1).contiguous() 
+        #  # linear_sp_sent generates a single score for each sentence, instead of 2 scores for yes and no.   
+        # # Argument the score with additional score=0. The same way did in the HOTPOTqa paper
+        # sp_para_output_aux = torch.zeros(sp_para_output_t.shape, dtype=torch.float, device=sp_para_output_t.device) 
+        # predict_support_para = torch.cat([sp_para_output_aux, sp_para_output_t], dim=-1).contiguous() 
  
-        ### 4. supporting fact classification ###     
-        # the first sentence in a paragraph is leading by <p>, other sentences are leading by <s>
+        # ### 4. supporting fact classification ###     
+        # # the first sentence in a paragraph is leading by <p>, other sentences are leading by <s>
  
-        sp_sent_output = sequence_output[:,sent_indexes,:]  
-        sp_sent_output_t = self.fnn_sp_sent(sp_sent_output)     
-        sp_sent_output_aux = torch.zeros(sp_sent_output_t.shape, dtype=torch.float, device=sp_sent_output_t.device) 
-        predict_support_sent = torch.cat([sp_sent_output_aux, sp_sent_output_t], dim=-1).contiguous() 
+        # sp_sent_output = sequence_output[:,sent_indexes,:]  
+        # sp_sent_output_t = self.fnn_sp_sent(sp_sent_output)     
+        # sp_sent_output_aux = torch.zeros(sp_sent_output_t.shape, dtype=torch.float, device=sp_sent_output_t.device) 
+        # predict_support_sent = torch.cat([sp_sent_output_aux, sp_sent_output_t], dim=-1).contiguous() 
         
-        outputs = (start_logits, end_logits, type_logits, sp_para_output_t, sp_sent_output_t)  
-        answer_loss, type_loss, sp_para_loss, sp_sent_loss  = self.loss_computation(start_positions, end_positions, start_logits, end_logits, q_type, type_logits, sp_para, predict_support_para, sp_sent, predict_support_sent)
+        outputs = (start_logits, end_logits, type_logits) #, sp_para_output_t, sp_sent_output_t)  
+        # answer_loss, type_loss, sp_para_loss, sp_sent_loss  = self.loss_computation(start_positions, end_positions, start_logits, end_logits, q_type, type_logits, sp_para, predict_support_para, sp_sent, predict_support_sent)
+        answer_loss, type_loss  = self.loss_computation(start_positions, end_positions, start_logits, end_logits, q_type, type_logits)
  
-        outputs = (answer_loss, type_loss, sp_para_loss, sp_sent_loss,) + outputs    
+        # outputs = (answer_loss, type_loss, sp_para_loss, sp_sent_loss,) + outputs    
+        outputs = (answer_loss, type_loss,) + outputs   
+        
         return outputs
-    
-    def loss_computation(self, start_positions, end_positions, start_logits, end_logits, q_type, type_logits, sp_para, predict_support_para, sp_sent, predict_support_sent):
+        
+    def loss_computation(self, start_positions, end_positions, start_logits, end_logits, q_type, type_logits):
+ 
+    # def loss_computation(self, start_positions, end_positions, start_logits, end_logits, q_type, type_logits, sp_para, predict_support_para, sp_sent, predict_support_sent):
         if start_positions is not None and end_positions is not None:
             # If we are on multi-GPU, split add a dimension
             if len(start_positions.size()) > 1:
@@ -712,16 +724,16 @@ class hotpotqa(pl.LightningModule):
                 end_loss = crossentropy(end_logits, end_positions[:, 0])
                 
  
-            crossentropy = torch.nn.CrossEntropyLoss()
+            crossentropy = torch.nn.CrossEntropyLoss(ignore_index=-1)
             type_loss = crossentropy(type_logits, q_type)  
             
-            crossentropy_average = torch.nn.CrossEntropyLoss(reduction = 'mean', ignore_index=-1)      
-            sp_para_loss = crossentropy_average(predict_support_para.view(-1, 2), sp_para.view(-1))
-            sp_sent_loss = crossentropy_average(predict_support_sent.view(-1, 2), sp_sent.view(-1))      
+            # crossentropy_average = torch.nn.CrossEntropyLoss(reduction = 'mean', ignore_index=-1)      
+            # sp_para_loss = crossentropy_average(predict_support_para.view(-1, 2), sp_para.view(-1))
+            # sp_sent_loss = crossentropy_average(predict_support_sent.view(-1, 2), sp_sent.view(-1))      
  
             answer_loss = (start_loss + end_loss) / 2 
-        return answer_loss, type_loss, sp_para_loss, sp_sent_loss  
-
+        return answer_loss, type_loss
+        # return answer_loss, type_loss, sp_para_loss, sp_sent_loss 
 
 #     %%add_to hotpotqa    
     def _get_special_index(self, input_ids, special_tokens):
@@ -858,21 +870,19 @@ class hotpotqa(pl.LightningModule):
         # do the forward pass and calculate the loss for a batch 
         input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para, qid, answer = batch 
         # print("size of input_ids: " + str(input_ids.size())) 
-        output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para)
-        answer_loss, type_loss, sp_para_loss, sp_sent_loss  = output[:4]
-        # print("answer_loss: ", answer_loss)
-        # print("type_loss: ", type_loss)
-        # print("sp_para_loss: ", sp_para_loss)
-        # print("sp_sent_loss: ", sp_sent_loss)
+        output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type)
+        # output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para)
+        # answer_loss, type_loss, sp_para_loss, sp_sent_loss  = output[:4]
+        answer_loss, type_loss = output[:2]
         
     #     loss  = answer_loss +  type_loss + sp_para_loss + sp_sent_loss
-        loss = answer_loss + 5*type_loss + 10*sp_para_loss + 10*sp_sent_loss
+        loss = answer_loss + 5*type_loss #+ 10*sp_para_loss + 10*sp_sent_loss
     #     print("weighted loss: ", loss)
     #     print("self.trainer.optimizers[0].param_groups[0]['lr']: ", self.trainer.optimizers[0].param_groups[0]['lr'])
         lr = loss.new_zeros(1) + self.trainer.optimizers[0].param_groups[0]['lr']  # loss.new_zeros(1) is tensor([0.]), converting 'lr' to tensor' by adding it.  
         
         tensorboard_logs = {'loss': loss, 'train_answer_loss': answer_loss, 'train_type_loss': type_loss, 
-                            'train_sp_para_loss': sp_para_loss, 'train_sp_sent_loss': sp_sent_loss, 
+                            #'train_sp_para_loss': sp_para_loss, 'train_sp_sent_loss': sp_sent_loss, 
                             'lr': lr,
                             'mem': torch.tensor(torch.cuda.memory_allocated(input_ids.device) / 1024 ** 3).type_as(loss) }
         return tensorboard_logs
@@ -924,12 +934,14 @@ class hotpotqa(pl.LightningModule):
     def validation_step(self, batch, batch_nb):
         input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para, qid, answer = batch
 
-        output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para)
-        answer_loss, type_loss, sp_para_loss, sp_sent_loss, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output = output 
-        loss = answer_loss + 5*type_loss + 10*sp_para_loss + 10*sp_sent_loss
+        # output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para)
+        output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type)
+        # answer_loss, type_loss, sp_para_loss, sp_sent_loss, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output = output 
+        answer_loss, type_loss, start_logits, end_logits, type_logits = output 
+        loss = answer_loss + 5*type_loss # + 10*sp_para_loss + 10*sp_sent_loss
  
-        answers_pred, sp_sent_pred, sp_para_pred = self.decode(input_ids, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output)
- 
+        # answers_pred, sp_sent_pred, sp_para_pred = self.decode(input_ids, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output)
+        answers_pred = self.decode(input_ids, start_logits, end_logits, type_logits)
  
         if(len(answers_pred) != 1):
             print("len(answers_pred) != 1")
@@ -952,35 +964,37 @@ class hotpotqa(pl.LightningModule):
 #         print("recall: " + str(recall))
 #         print("em: " + str(em))  
 
-        if(len(sp_sent_pred) > 0):
-            sp_sent_em, sp_sent_precision, sp_sent_recall, sp_sent_f1 = self.sp_metrics(sp_sent_pred, torch.where(sp_sent.squeeze())[0].tolist())
-            sp_sent_em = torch.tensor(sp_sent_em).type_as(loss)
-            sp_sent_precision = torch.tensor(sp_sent_precision).type_as(loss)
-            sp_sent_recall = torch.tensor(sp_sent_recall).type_as(loss)
-            sp_sent_f1 = torch.tensor(sp_sent_f1).type_as(loss)
+#         if(len(sp_sent_pred) > 0):
+#             sp_sent_em, sp_sent_precision, sp_sent_recall, sp_sent_f1 = self.sp_metrics(sp_sent_pred, torch.where(sp_sent.squeeze())[0].tolist())
+#             sp_sent_em = torch.tensor(sp_sent_em).type_as(loss)
+#             sp_sent_precision = torch.tensor(sp_sent_precision).type_as(loss)
+#             sp_sent_recall = torch.tensor(sp_sent_recall).type_as(loss)
+#             sp_sent_f1 = torch.tensor(sp_sent_f1).type_as(loss)
 
-   #         print("sp_sent_em: " + str(sp_sent_em))
-   #         print("sp_sent_precision: " + str(sp_sent_precision))
-   #         print("sp_sent_recall: " + str(sp_sent_recall))    
-   #         print("sp_sent_f1: " + str(sp_sent_f1))    
+#   #         print("sp_sent_em: " + str(sp_sent_em))
+#   #         print("sp_sent_precision: " + str(sp_sent_precision))
+#   #         print("sp_sent_recall: " + str(sp_sent_recall))    
+#   #         print("sp_sent_f1: " + str(sp_sent_f1))    
 
-            joint_prec = prec * sp_sent_precision
-            joint_recall = recall * sp_sent_recall
-            if joint_prec + joint_recall > 0:
-                joint_f1 = 2 * joint_prec * joint_recall / (joint_prec + joint_recall)
-            else:
-                joint_f1 = torch.tensor(0.0).type_as(loss)
-            joint_em = em * sp_sent_em 
+#             joint_prec = prec * sp_sent_precision
+#             joint_recall = recall * sp_sent_recall
+#             if joint_prec + joint_recall > 0:
+#                 joint_f1 = 2 * joint_prec * joint_recall / (joint_prec + joint_recall)
+#             else:
+#                 joint_f1 = torch.tensor(0.0).type_as(loss)
+#             joint_em = em * sp_sent_em 
 
-        else:
-            sp_sent_em, sp_sent_precision, sp_sent_recall, sp_sent_f1 = torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
-            joint_em, joint_f1, joint_prec, joint_recall =  torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
+        # else:
+            # sp_sent_em, sp_sent_precision, sp_sent_recall, sp_sent_f1 = torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
+            # joint_em, joint_f1, joint_prec, joint_recall =  torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
 
 
-        return { 'vloss': loss, 'answer_loss': answer_loss, 'type_loss': type_loss, 'sp_para_loss': sp_para_loss, 'sp_sent_loss': sp_sent_loss,
+        return { 'vloss': loss, 'answer_loss': answer_loss, 'type_loss': type_loss, 
+                # 'sp_para_loss': sp_para_loss, 'sp_sent_loss': sp_sent_loss,
                    'answer_score': pre_answer_score, 'f1': f1, 'prec':prec, 'recall':recall, 'em': em,
-                   'sp_em': sp_sent_em, 'sp_f1': sp_sent_f1, 'sp_prec': sp_sent_precision, 'sp_recall': sp_sent_recall,
-                   'joint_em': joint_em, 'joint_f1': joint_f1, 'joint_prec': joint_prec, 'joint_recall': joint_recall}
+                #   'sp_em': sp_sent_em, 'sp_f1': sp_sent_f1, 'sp_prec': sp_sent_precision, 'sp_recall': sp_sent_recall,
+                #   'joint_em': joint_em, 'joint_f1': joint_f1, 'joint_prec': joint_prec, 'joint_recall': joint_recall
+        }
 
 
 # ###### decode
@@ -988,8 +1002,9 @@ class hotpotqa(pl.LightningModule):
 # In[ ]:
 
 
-
-    def decode(self, input_ids, start_logits, end_logits, type_logits, sp_para_logits, sp_sent_logits):
+    # def decode(self, input_ids, start_logits, end_logits, type_logits, sp_para_logits, sp_sent_logits):
+    def decode(self, input_ids, start_logits, end_logits, type_logits):
+        
 #         print("decode")
 
         question_end_index = self._get_special_index(input_ids, [QUESTION_END])
@@ -1061,36 +1076,37 @@ class hotpotqa(pl.LightningModule):
             assert False 
 
 
-        sent_indexes = self._get_special_index(input_ids, [SENT_MARKER_END])
-        para_indexes = self._get_special_index(input_ids, [TITLE_START])
+#         sent_indexes = self._get_special_index(input_ids, [SENT_MARKER_END])
+#         para_indexes = self._get_special_index(input_ids, [TITLE_START])
 
-        s_to_p_map = []
-        for s in sent_indexes:
-            s_to_p = torch.where(torch.le(para_indexes, s))[0][-1]     # last para_index smaller or equal to s
-            s_to_p_map.append(s_to_p.item()) 
-#         print("s_to_p_map: " + str(s_to_p_map))
+#         s_to_p_map = []
+#         for s in sent_indexes:
+#             s_to_p = torch.where(torch.le(para_indexes, s))[0][-1]     # last para_index smaller or equal to s
+#             s_to_p_map.append(s_to_p.item()) 
+# #         print("s_to_p_map: " + str(s_to_p_map))
 
-#         print("sp_para_logits", sp_para_logits)
-#         print("sp_sent_logits", sp_sent_logits)
+# #         print("sp_para_logits", sp_para_logits)
+# #         print("sp_sent_logits", sp_sent_logits)
  
-        sp_para_top2 = sp_para_logits.squeeze().topk(k=2).indices
-        if(sp_sent_logits.squeeze().size(0) > 12):
-            sp_sent_top12 = sp_sent_logits.squeeze().topk(k=12).indices
-        else:
-            sp_sent_top12 = sp_sent_logits.squeeze().topk(k=sp_sent_logits.squeeze().size(0)).indices
-#         print("sp_para_top2", sp_para_top2)
-#         print("sp_sent_top12", sp_sent_top12)
+#         sp_para_top2 = sp_para_logits.squeeze().topk(k=2).indices
+#         if(sp_sent_logits.squeeze().size(0) > 12):
+#             sp_sent_top12 = sp_sent_logits.squeeze().topk(k=12).indices
+#         else:
+#             sp_sent_top12 = sp_sent_logits.squeeze().topk(k=sp_sent_logits.squeeze().size(0)).indices
+# #         print("sp_para_top2", sp_para_top2)
+# #         print("sp_sent_top12", sp_sent_top12)
 
-        sp_sent_pred = set()
-        sp_para_pred = set(sp_para_top2.tolist())
-        for sp_sent in sp_sent_top12:
-            sp_sent_to_para = s_to_p_map[sp_sent.item()]
-            if sp_sent_to_para in sp_para_top2:
-                sp_sent_pred.add(sp_sent.item())
-    #             sp_para_pred.add(sp_sent_to_para) 
-#         print("sp_sent_pred: " + str(sp_sent_pred))
-#         print("sp_para_pred: " + str(sp_para_pred))
-        return (answers, sp_sent_pred, sp_para_pred)
+#         sp_sent_pred = set()
+#         sp_para_pred = set(sp_para_top2.tolist())
+#         for sp_sent in sp_sent_top12:
+#             sp_sent_to_para = s_to_p_map[sp_sent.item()]
+#             if sp_sent_to_para in sp_para_top2:
+#                 sp_sent_pred.add(sp_sent.item())
+#     #             sp_para_pred.add(sp_sent_to_para) 
+# #         print("sp_sent_pred: " + str(sp_sent_pred))
+# #         print("sp_para_pred: " + str(sp_para_pred))
+        # return (answers, sp_sent_pred, sp_para_pred)
+        return answers 
 
 
 # ###### metrics
@@ -1151,8 +1167,8 @@ class hotpotqa(pl.LightningModule):
         avg_loss = torch.stack([x['vloss'] for x in outputs]).mean()  
         avg_answer_loss = torch.stack([x['answer_loss'] for x in outputs]).mean()  
         avg_type_loss = torch.stack([x['type_loss'] for x in outputs]).mean()  
-        avg_sp_para_loss = torch.stack([x['sp_para_loss'] for x in outputs]).mean()  
-        avg_sp_sent_loss = torch.stack([x['sp_sent_loss'] for x in outputs]).mean()  
+        # avg_sp_para_loss = torch.stack([x['sp_para_loss'] for x in outputs]).mean()  
+        # avg_sp_sent_loss = torch.stack([x['sp_sent_loss'] for x in outputs]).mean()  
             
  
         answer_scores = [x['answer_score'] for x in outputs] 
@@ -1160,14 +1176,14 @@ class hotpotqa(pl.LightningModule):
         em_scores = [x['em'] for x in outputs]  
         prec_scores =  [x['prec'] for x in outputs] 
         recall_scores = [x['recall'] for x in outputs]  
-        sp_sent_f1_scores = [x['sp_f1'] for x in outputs]   
-        sp_sent_em_scores = [x['sp_em'] for x in outputs]   
-        sp_sent_prec_scores = [x['sp_prec'] for x in outputs]   
-        sp_sent_recall_scores = [x['sp_recall'] for x in outputs]   
-        joint_f1_scores = [x['joint_f1'] for x in outputs]  
-        joint_em_scores = [x['joint_em'] for x in outputs]  
-        joint_prec_scores = [x['joint_prec'] for x in outputs]  
-        joint_recall_scores = [x['joint_recall'] for x in outputs]
+        # sp_sent_f1_scores = [x['sp_f1'] for x in outputs]   
+        # sp_sent_em_scores = [x['sp_em'] for x in outputs]   
+        # sp_sent_prec_scores = [x['sp_prec'] for x in outputs]   
+        # sp_sent_recall_scores = [x['sp_recall'] for x in outputs]   
+        # joint_f1_scores = [x['joint_f1'] for x in outputs]  
+        # joint_em_scores = [x['joint_em'] for x in outputs]  
+        # joint_prec_scores = [x['joint_prec'] for x in outputs]  
+        # joint_recall_scores = [x['joint_recall'] for x in outputs]
 
 
 
@@ -1179,10 +1195,10 @@ class hotpotqa(pl.LightningModule):
             avg_answer_loss /= self.trainer.world_size 
             torch.distributed.all_reduce(avg_type_loss, op=torch.distributed.ReduceOp.SUM)
             avg_type_loss /= self.trainer.world_size 
-            torch.distributed.all_reduce(avg_sp_para_loss, op=torch.distributed.ReduceOp.SUM)
-            avg_sp_para_loss /= self.trainer.world_size 
-            torch.distributed.all_reduce(avg_sp_sent_loss, op=torch.distributed.ReduceOp.SUM)
-            avg_sp_sent_loss /= self.trainer.world_size 
+            # torch.distributed.all_reduce(avg_sp_para_loss, op=torch.distributed.ReduceOp.SUM)
+            # avg_sp_para_loss /= self.trainer.world_size 
+            # torch.distributed.all_reduce(avg_sp_sent_loss, op=torch.distributed.ReduceOp.SUM)
+            # avg_sp_sent_loss /= self.trainer.world_size 
      
             answer_scores = self.sync_list_across_gpus(answer_scores, avg_loss.device, torch.float)
             f1_scores = self.sync_list_across_gpus(f1_scores, avg_loss.device, torch.float)
@@ -1190,15 +1206,15 @@ class hotpotqa(pl.LightningModule):
             prec_scores = self.sync_list_across_gpus(prec_scores, avg_loss.device, torch.float)
             recall_scores = self.sync_list_across_gpus(recall_scores, avg_loss.device, torch.float)
             
-            sp_sent_f1_scores = self.sync_list_across_gpus(sp_sent_f1_scores, avg_loss.device, torch.float)
-            sp_sent_em_scores = self.sync_list_across_gpus(sp_sent_em_scores, avg_loss.device, torch.float)
-            sp_sent_prec_scores = self.sync_list_across_gpus(sp_sent_prec_scores, avg_loss.device, torch.float)
-            sp_sent_recall_scores = self.sync_list_across_gpus(sp_sent_recall_scores, avg_loss.device, torch.float)
+            # sp_sent_f1_scores = self.sync_list_across_gpus(sp_sent_f1_scores, avg_loss.device, torch.float)
+            # sp_sent_em_scores = self.sync_list_across_gpus(sp_sent_em_scores, avg_loss.device, torch.float)
+            # sp_sent_prec_scores = self.sync_list_across_gpus(sp_sent_prec_scores, avg_loss.device, torch.float)
+            # sp_sent_recall_scores = self.sync_list_across_gpus(sp_sent_recall_scores, avg_loss.device, torch.float)
             
-            joint_f1_scores = self.sync_list_across_gpus(joint_f1_scores, avg_loss.device, torch.float)
-            joint_em_scores = self.sync_list_across_gpus(joint_em_scores, avg_loss.device, torch.float)
-            joint_prec_scores = self.sync_list_across_gpus(joint_prec_scores, avg_loss.device, torch.float)
-            joint_recall_scores = self.sync_list_across_gpus(joint_recall_scores, avg_loss.device, torch.float)
+            # joint_f1_scores = self.sync_list_across_gpus(joint_f1_scores, avg_loss.device, torch.float)
+            # joint_em_scores = self.sync_list_across_gpus(joint_em_scores, avg_loss.device, torch.float)
+            # joint_prec_scores = self.sync_list_across_gpus(joint_prec_scores, avg_loss.device, torch.float)
+            # joint_recall_scores = self.sync_list_across_gpus(joint_recall_scores, avg_loss.device, torch.float)
             
             
         print(f'after sync --> sizes: {len(answer_scores)}, {len(f1_scores)}, {len(em_scores)}')
@@ -1207,38 +1223,39 @@ class hotpotqa(pl.LightningModule):
         avg_val_em = sum(em_scores) / len(em_scores)    
         avg_val_prec = sum(prec_scores) / len(prec_scores)  
         avg_val_recall = sum(recall_scores) / len(recall_scores)    
-        avg_val_sp_sent_f1 = sum(sp_sent_f1_scores) / len(sp_sent_f1_scores)    
-        avg_val_sp_sent_em = sum(sp_sent_em_scores) / len(sp_sent_em_scores)    
-        avg_val_sp_sent_prec = sum(sp_sent_prec_scores) / len(sp_sent_prec_scores)  
-        avg_val_sp_sent_recall = sum(sp_sent_recall_scores) / len(sp_sent_recall_scores)    
-        avg_val_joint_f1 = sum(joint_f1_scores) / len(joint_f1_scores)  
-        avg_val_joint_em = sum(joint_em_scores) / len(joint_em_scores)  
-        avg_val_joint_prec = sum(joint_prec_scores) / len(joint_prec_scores)    
-        avg_val_joint_recall = sum(joint_recall_scores) / len(joint_recall_scores)  
+        # avg_val_sp_sent_f1 = sum(sp_sent_f1_scores) / len(sp_sent_f1_scores)    
+        # avg_val_sp_sent_em = sum(sp_sent_em_scores) / len(sp_sent_em_scores)    
+        # avg_val_sp_sent_prec = sum(sp_sent_prec_scores) / len(sp_sent_prec_scores)  
+        # avg_val_sp_sent_recall = sum(sp_sent_recall_scores) / len(sp_sent_recall_scores)    
+        # avg_val_joint_f1 = sum(joint_f1_scores) / len(joint_f1_scores)  
+        # avg_val_joint_em = sum(joint_em_scores) / len(joint_em_scores)  
+        # avg_val_joint_prec = sum(joint_prec_scores) / len(joint_prec_scores)    
+        # avg_val_joint_recall = sum(joint_recall_scores) / len(joint_recall_scores)  
        
         print("avg_loss: ", avg_loss, end = '\t')   
         print("avg_answer_loss: ", avg_answer_loss, end = '\t') 
         print("avg_type_loss: ", avg_type_loss, end = '\t') 
-        print("avg_sp_para_loss: ", avg_sp_para_loss, end = '\t')   
-        print("avg_sp_sent_loss: ", avg_sp_sent_loss)   
+        # print("avg_sp_para_loss: ", avg_sp_para_loss, end = '\t')   
+        # print("avg_sp_sent_loss: ", avg_sp_sent_loss)   
         print("avg_val_f1: ", avg_val_f1, end = '\t')   
         print("avg_val_em: ", avg_val_em, end = '\t')   
         print("avg_val_prec: ", avg_val_prec, end = '\t')   
         print("avg_val_recall: ", avg_val_recall)   
-        print("avg_val_sp_sent_f1: ", avg_val_sp_sent_f1, end = '\t')   
-        print("avg_val_sp_sent_em: " , avg_val_sp_sent_em, end = '\t')  
-        print("avg_val_sp_sent_prec: ", avg_val_sp_sent_prec, end = '\t')   
-        print("avg_val_sp_sent_recall: ", avg_val_sp_sent_recall)   
-        print("avg_val_joint_f1: " , avg_val_joint_f1, end = '\t')  
-        print("avg_val_joint_em: ", avg_val_joint_em, end = '\t')   
-        print("avg_val_joint_prec: ", avg_val_joint_prec, end = '\t')   
-        print("avg_val_joint_recall: ", avg_val_joint_recall)   
+        # print("avg_val_sp_sent_f1: ", avg_val_sp_sent_f1, end = '\t')   
+        # print("avg_val_sp_sent_em: " , avg_val_sp_sent_em, end = '\t')  
+        # print("avg_val_sp_sent_prec: ", avg_val_sp_sent_prec, end = '\t')   
+        # print("avg_val_sp_sent_recall: ", avg_val_sp_sent_recall)   
+        # print("avg_val_joint_f1: " , avg_val_joint_f1, end = '\t')  
+        # print("avg_val_joint_em: ", avg_val_joint_em, end = '\t')   
+        # print("avg_val_joint_prec: ", avg_val_joint_prec, end = '\t')   
+        # print("avg_val_joint_recall: ", avg_val_joint_recall)   
             
        
-        logs = {'avg_val_loss': avg_loss, 'avg_val_answer_loss': avg_answer_loss, 'avg_val_type_loss': avg_type_loss, 'avg_val_sp_para_loss': avg_sp_para_loss, 'avg_val_sp_sent_loss': avg_sp_sent_loss,   
+        logs = {'avg_val_loss': avg_loss, 'avg_val_answer_loss': avg_answer_loss, 'avg_val_type_loss': avg_type_loss, 
+        # 'avg_val_sp_para_loss': avg_sp_para_loss, 'avg_val_sp_sent_loss': avg_sp_sent_loss,   
         'avg_val_f1': avg_val_f1, 'avg_val_em': avg_val_em,  'avg_val_prec': avg_val_prec, 'avg_val_recall': avg_val_recall,    
-        'avg_val_sp_sent_f1': avg_val_sp_sent_f1, 'avg_val_sp_sent_em': avg_val_sp_sent_em,  'avg_val_sp_sent_prec': avg_val_sp_sent_prec, 'avg_val_sp_sent_recall': avg_val_sp_sent_recall,    
-        'avg_val_joint_f1': avg_val_joint_f1, 'avg_val_joint_em': avg_val_joint_em,  'avg_val_joint_prec': avg_val_joint_prec, 'avg_val_joint_recall': avg_val_joint_recall 
+        # 'avg_val_sp_sent_f1': avg_val_sp_sent_f1, 'avg_val_sp_sent_em': avg_val_sp_sent_em,  'avg_val_sp_sent_prec': avg_val_sp_sent_prec, 'avg_val_sp_sent_recall': avg_val_sp_sent_recall,    
+        # 'avg_val_joint_f1': avg_val_joint_f1, 'avg_val_joint_em': avg_val_joint_em,  'avg_val_joint_prec': avg_val_joint_prec, 'avg_val_joint_recall': avg_val_joint_recall 
         }   
        
         return {'avg_val_loss': avg_loss, 'log': logs}
@@ -1261,11 +1278,14 @@ class hotpotqa(pl.LightningModule):
         input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para, qid, answer = batch
 
         print("test_step of qid: ", qid, end="\t") 
-        output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para)
-        answer_loss, type_loss, sp_para_loss, sp_sent_loss, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output = output 
-        loss = answer_loss + 5*type_loss + 10*sp_para_loss + 10*sp_sent_loss
+        # output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para)
+        output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type)
+        # answer_loss, type_loss, sp_para_loss, sp_sent_loss, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output = output
+        answer_loss, type_loss, start_logits, end_logits, type_logits = output
+        loss = answer_loss + 5*type_loss #+ 10*sp_para_loss + 10*sp_sent_loss
  
-        answers_pred, sp_sent_pred, sp_para_pred = self.decode(input_ids, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output)
+        # answers_pred, sp_sent_pred, sp_para_pred = self.decode(input_ids, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output)
+        answers_pred = self.decode(input_ids, start_logits, end_logits, type_logits)
  
         if(len(answers_pred) != 1):
             print("len(answers_pred) != 1")
@@ -1280,7 +1300,9 @@ class hotpotqa(pl.LightningModule):
 
         print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer)
 
-        return { 'vloss': loss, 'answer_loss': answer_loss, 'type_loss': type_loss, 'sp_para_loss': sp_para_loss, 'sp_sent_loss': sp_sent_loss, 'answer_score': pre_answer_score}
+        return { 'vloss': loss, 'answer_loss': answer_loss, 'type_loss': type_loss, 
+        #'sp_para_loss': sp_para_loss, 'sp_sent_loss': sp_sent_loss, 
+                 'answer_score': pre_answer_score}
 
 
 # ##### test_end
@@ -1294,8 +1316,8 @@ class hotpotqa(pl.LightningModule):
         avg_loss = torch.stack([x['vloss'] for x in outputs]).mean()  
         avg_answer_loss = torch.stack([x['answer_loss'] for x in outputs]).mean()  
         avg_type_loss = torch.stack([x['type_loss'] for x in outputs]).mean()  
-        avg_sp_para_loss = torch.stack([x['sp_para_loss'] for x in outputs]).mean()  
-        avg_sp_sent_loss = torch.stack([x['sp_sent_loss'] for x in outputs]).mean()  
+        # avg_sp_para_loss = torch.stack([x['sp_para_loss'] for x in outputs]).mean()  
+        # avg_sp_sent_loss = torch.stack([x['sp_sent_loss'] for x in outputs]).mean()  
              
         answer_scores = [x['answer_score'] for x in outputs]  # [item for sublist in outputs for item in sublist['answer_score']] #torch.stack([x['answer_score'] for x in outputs]).mean() # 
          
@@ -1308,10 +1330,10 @@ class hotpotqa(pl.LightningModule):
             avg_answer_loss /= self.trainer.world_size 
             torch.distributed.all_reduce(avg_type_loss, op=torch.distributed.ReduceOp.SUM)
             avg_type_loss /= self.trainer.world_size 
-            torch.distributed.all_reduce(avg_sp_para_loss, op=torch.distributed.ReduceOp.SUM)
-            avg_sp_para_loss /= self.trainer.world_size 
-            torch.distributed.all_reduce(avg_sp_sent_loss, op=torch.distributed.ReduceOp.SUM)
-            avg_sp_sent_loss /= self.trainer.world_size 
+            # torch.distributed.all_reduce(avg_sp_para_loss, op=torch.distributed.ReduceOp.SUM)
+            # avg_sp_para_loss /= self.trainer.world_size 
+            # torch.distributed.all_reduce(avg_sp_sent_loss, op=torch.distributed.ReduceOp.SUM)
+            # avg_sp_sent_loss /= self.trainer.world_size 
 
     #         int_qids = self.sync_list_across_gpus(int_qids, avg_loss.device, torch.int)
             answer_scores = self.sync_list_across_gpus(answer_scores, avg_loss.device, torch.float)
@@ -1326,7 +1348,8 @@ class hotpotqa(pl.LightningModule):
         # print("avg_sp_para_loss: ", avg_sp_para_loss, end = '\t') 
         # print("avg_sp_sent_loss: ", avg_sp_sent_loss, end = '\t')  
               
-        logs = {'avg_val_loss': avg_loss, 'avg_val_answer_loss': avg_answer_loss, 'avg_val_type_loss': avg_type_loss, 'avg_val_sp_para_loss': avg_sp_para_loss, 'avg_val_sp_sent_loss': avg_sp_sent_loss
+        logs = {'avg_val_loss': avg_loss, 'avg_val_answer_loss': avg_answer_loss, 'avg_val_type_loss': avg_type_loss, 
+                # 'avg_val_sp_para_loss': avg_sp_para_loss, 'avg_val_sp_sent_loss': avg_sp_sent_loss
                }
 
         return {'avg_val_loss': avg_loss, 'log': logs} 
