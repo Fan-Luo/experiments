@@ -597,12 +597,13 @@ class hotpotqa(pl.LightningModule):
                                   max_num_answers=self.args.max_num_answers,
                                   max_question_len=self.args.max_question_len,
                                   ignore_seq_with_no_answers=False)  # evaluation data should keep all examples
-
+        dist_sampler = torch.utils.data.distributed.DistributedSampler(dataset, shuffle=False) if self.trainer.use_ddp else None
         dl = DataLoader(dataset, batch_size=1, shuffle=False,
-                        num_workers=self.args.num_workers, sampler=None,
+                        num_workers=self.args.num_workers, sampler=dist_sampler,
                         collate_fn=hotpotqaDataset.collate_one_doc_and_lists)
         self.test_dataloader_object = dl
         return self.test_dataloader_object
+
 
 #%%add_to hotpotqa  
     def forward(self, input_ids, attention_mask, segment_ids, start_positions, end_positions, q_type, sp_sent, sp_para):
@@ -1326,8 +1327,7 @@ class hotpotqa(pl.LightningModule):
         parser.add_argument("--train_dataset", type=str, required=False, help="Path to the training squad-format")  
         parser.add_argument("--dev_dataset", type=str, required=True, help="Path to the dev squad-format")  
         parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
-        parser.add_argument("--gpus", type=int, default=1,
-                            help="Number of gpus. 0 for CPU")
+        parser.add_argument("--gpus", type=str, default='0', help="ids of gpus. Default is gpu 0. To use CPU, use --gpus "" ")
         parser.add_argument("--warmup", type=int, default=1000, help="Number of warmup steps")
         parser.add_argument("--lr", type=float, default=0.00005, help="Maximum learning rate")
         parser.add_argument("--val_every", type=float, default=1.0, help="How often within one training epoch to check the validation set.")
@@ -1419,17 +1419,19 @@ def main(args):
        
     with open(args.train_dataset, "r", encoding='utf-8') as f: 
         train_set_size = len(json.load(f))  
-    
     train_set_size = train_set_size * args.train_percent    # hardcode dataset size. Needed to compute number of steps for the lr scheduler
-    args.steps = args.epochs * train_set_size / (args.batch_size * max(args.gpus, 1))
     
-    print(f'>>>>>>> #train_set_size: {train_set_size}, #steps: {args.steps}, #epochs: {args.epochs}, batch_size: {args.batch_size * max(args.gpus, 1)} <<<<<<<')
+    args.gpus = [int(x) for x in args.gpus.split(',')] if args.gpus != "" else None
+    num_devices = max(len(args.gpus) , 1 )
     
+    args.steps = args.epochs * train_set_size / (args.batch_size * num_devices)
+    
+    print(f'>>>>>>> #train_set_size: {train_set_size}, #steps: {args.steps}, #epochs: {args.epochs}, batch_size: {args.batch_size * num_devices} <<<<<<<')
     
     # In[ ]:
     
     
-    trainer = pl.Trainer(gpus=args.gpus, distributed_backend='ddp' if args.gpus and args.gpus > 1 else None,
+    trainer = pl.Trainer(gpus=args.gpus, distributed_backend='ddp' if args.gpus and (len(args.gpus) > 1) else None,
                          track_grad_norm=-1, max_epochs=args.epochs, early_stop_callback=None, replace_sampler_ddp=False,
                          accumulate_grad_batches=args.batch_size,
                          train_percent_check = args.train_percent,
@@ -1440,7 +1442,7 @@ def main(args):
                          logger=logger if not args.disable_checkpointing else False,
                          checkpoint_callback=checkpoint_callback if not args.disable_checkpointing else False,
                          show_progress_bar=args.no_progress_bar,
-                         use_amp=not args.fp32 and args.gpus > 1, amp_level='O2',
+                         use_amp=not args.fp32 and args.gpus and (len(args.gpus) > 1), amp_level='O2',
                          check_val_every_n_epoch=1
                          )
      
