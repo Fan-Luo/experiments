@@ -21,9 +21,7 @@ QUESTION_END = '[/question]'
 TITLE_START = '<t>'  # indicating the start of the title of a paragraph (also used for loss over paragraphs)
 TITLE_END = '</t>'   # indicating the end of the title of a paragraph
 SENT_MARKER_END = '[/sent]'  # indicating the end of the title of a sentence (used for loss over sentences)
-PAR = '[/par]'  # used for indicating end of the regular context and beginning of `yes/no/null` answers
- 
- 
+PAR = '[/par]'  # used for indicating end of the regular context and beginning of `yes/no/null` answers 
 
 def create_example_dict(context, answer, id, question, is_sup_fact, is_supporting_para):
     return {
@@ -113,7 +111,9 @@ def convert_hotpot_to_squad_format(json_dict, gold_paras_only=False):
                     )
                 )
             ) 
-
+#     print("number of questions with answer not found in context: ", num_null_answer)
+#     print("number of questions with answer 'yes': ", num_yes_answer)
+#     print("number of questions with answer 'no': ", num_no_answer)
     return new_dict
 
 def normalize_answer(s):
@@ -162,8 +162,8 @@ def normalize_answer(s):
 # !conda install jupyter --yes
 
 # need to run this every time start this notebook, to add python3.7/site-packages to sys.pat, in order to import ipywidgets, which is used when RobertaTokenizer.from_pretrained('roberta-base') 
-import sys
-sys.path.insert(-1, '/xdisk/msurdeanu/fanluo/miniconda3/lib/python3.7/site-packages')
+# import sys
+# sys.path.insert(-1, '/xdisk/msurdeanu/fanluo/miniconda3/lib/python3.7/site-packages')
 
 import os
 from collections import defaultdict
@@ -175,7 +175,7 @@ import torch
 from torch.optim.lr_scheduler import LambdaLR
 
 from torch.utils.data import DataLoader, Dataset
-from transformers import RobertaTokenizer 
+from transformers import RobertaTokenizer, AutoModel, AutoConfig, AutoModelWithLMHead 
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -219,6 +219,7 @@ class hotpotqaDataset(Dataset):
             print(f'reading file: {self.file_path}')
             self.data_json = convert_hotpot_to_squad_format(json.load(f))['data']
                 
+       
         
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
@@ -226,7 +227,7 @@ class hotpotqaDataset(Dataset):
         self.doc_stride = doc_stride
         self.max_num_answers = max_num_answers
         self.ignore_seq_with_no_answers = ignore_seq_with_no_answers
-        self.max_question_len = max_question_len
+        self.max_question_len = max_question_len 
 
 #         print(tokenizer.all_special_tokens) 
     
@@ -258,7 +259,6 @@ class hotpotqaDataset(Dataset):
 # In[ ]:
 
     def one_example_to_tensors(self, example, idx):
- 
         def is_whitespace(c):
             if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
                 return True
@@ -311,8 +311,8 @@ class hotpotqaDataset(Dataset):
             for qa in paragraph["qas"]:
                 question_text = qa["question"]
 #                 print("question text: ", question_text)  
-                sp_sent = qa["is_sup_fact"]
-                sp_para = qa["is_supporting_para"]
+                # sp_sent = qa["is_sup_fact"]
+                # sp_para = qa["is_supporting_para"]
                 start_position = None
                 end_position = None
                 orig_answer_text = None 
@@ -363,22 +363,19 @@ class hotpotqaDataset(Dataset):
                 start_positions_list = []
                 end_positions_list = []
                 q_type_list = []
-                sp_sent_list =  [1 if ss else 0 for ss in sp_sent]
-                sp_para_list = [1 if sp else 0 for sp in sp_para]
+                # sp_sent_list =  [1 if ss else 0 for ss in sp_sent]
+                # sp_para_list = [1 if sp else 0 for sp in sp_para]
                 
 #                 print("before for")
                 for slice_start in range(0, len(all_doc_tokens), max_tokens_per_doc_slice - self.doc_stride):    # execute once by default
                     slice_end = min(slice_start + max_tokens_per_doc_slice, len(all_doc_tokens))
 
                     doc_slice_tokens = all_doc_tokens[slice_start:slice_end]
-                    tokens = [self.tokenizer.cls_token] + [QUESTION_START] + query_tokens + [QUESTION_END] + doc_slice_tokens + [PAR] +  self.tokenizer.tokenize("yes")  + self.tokenizer.tokenize("no")  +  [self.tokenizer.eos_token]   
+                    tokens = [self.tokenizer.cls_token] + [QUESTION_START] + query_tokens + [QUESTION_END] + doc_slice_tokens + [PAR] + self.tokenizer.tokenize("yes") + self.tokenizer.tokenize("no") + [self.tokenizer.eos_token]   
                     segment_ids = [0] * (len(query_tokens) + 3) + [1] * (len(doc_slice_tokens) + 4) 
-                    if(len(segment_ids) != len(tokens)):
-                        print("len(segment_ids): ", len(segment_ids))
-                        print("len(tokens): ", len(tokens))
-                        print("len(query_tokens): ", len(query_tokens))
-                        print("len(doc_slice_tokens): ", len(doc_slice_tokens))
-                        print("tokens: ", tokens)
+#                     if(len(segment_ids) != len(tokens)):
+#                         print("len(segment_ids): ", len(segment_ids))
+#                         print("len(tokens): ", len(tokens))
                     assert len(segment_ids) == len(tokens)
 
                     input_ids = self.tokenizer.convert_tokens_to_ids(tokens)   
@@ -422,6 +419,7 @@ class hotpotqaDataset(Dataset):
                             start_positions.append(-1)   
                             end_positions.append(-1) 
 
+
                     # answers from start_positions and end_positions if > self.max_num_answers
                     start_positions = start_positions[:self.max_num_answers]
                     end_positions = end_positions[:self.max_num_answers]
@@ -464,7 +462,7 @@ class hotpotqaDataset(Dataset):
                     
                 tensors_list.append((torch.tensor(input_ids_list), torch.tensor(input_mask_list), torch.tensor(segment_ids_list),
                                      torch.tensor(start_positions_list), torch.tensor(end_positions_list), torch.tensor(q_type_list),
-                                      torch.tensor([sp_sent_list]),  torch.tensor([sp_para_list]),
+                                    #   torch.tensor([sp_sent_list]),  torch.tensor([sp_para_list]),
                                      qa['id'], answer))     
         return tensors_list
 
@@ -534,13 +532,17 @@ class hotpotqa(pl.LightningModule):
         # config = LongformerConfig.from_pretrained(self.args.model_path) 
         # config.attention_mode = self.args.attention_mode
         # model = Longformer.from_pretrained(self.args.model_path, config=config)
-        model = Longformer.from_pretrained(self.args.model_path) 
+        
+        if 'longformer' in self.args.model_path:
+            model = Longformer.from_pretrained(self.args.model_path) 
 
-        for layer in model.encoder.layer:
-            layer.attention.self.attention_mode = self.args.attention_mode
-            self.args.attention_window = layer.attention.self.attention_window
-
-        # print("Loaded model with config:")
+            for layer in model.encoder.layer:
+                layer.attention.self.attention_mode = self.args.attention_mode
+                self.args.attention_window = layer.attention.self.attention_window
+        else:
+            model = AutoModel.from_pretrained(self.args.model_path)
+            
+        print("Loaded model with config:")
         print(model.config)
 
         for p in model.parameters():
@@ -603,49 +605,53 @@ class hotpotqa(pl.LightningModule):
         return self.test_dataloader_object
 
 #%%add_to hotpotqa  
-    def forward(self, input_ids, attention_mask, segment_ids, start_positions, end_positions, q_type): #, sp_sent, sp_para):
+    def forward(self, input_ids, attention_mask, segment_ids, start_positions, end_positions, q_type):  #, sp_sent, sp_para):
  
-        if(input_ids.size(0) > 1):
-            assert("multi rows per document")
-        # Each batch is one document, and each row of the batch is a chunck of the document.    ????
-        # Make sure all rows have the same question length.
-        
  
-        # local attention everywhere
-        attention_mask = torch.ones(input_ids.shape, dtype=torch.long, device=input_ids.device)
-        
-        # global attention for the cls and all question tokens
-        question_end_index = self._get_special_index(input_ids, [QUESTION_END])
-#         if(question_end_index.size(0) == 1):
-#             attention_mask[:,:question_end_index.item()] = 2  
-#         else:
-        attention_mask[:,:question_end_index[0].item()+1] = 2  # from <cls> until </q>
-#             print("more than 1 <q> in: ", self.tokenizer.convert_ids_to_tokens(input_ids[0].tolist()) )
-        
-        # global attention for the sentence and paragraph special tokens  
-        sent_indexes = self._get_special_index(input_ids, [SENT_MARKER_END])
-        attention_mask[:, sent_indexes] = 2
-        
-        para_indexes = self._get_special_index(input_ids, [TITLE_START])
-        attention_mask[:, para_indexes] = 2       
-         
-
-        # sliding_chunks implemenation of selfattention requires that seqlen is multiple of window size
-        input_ids, attention_mask = pad_to_window_size(
-            input_ids, attention_mask, self.args.attention_window, self.tokenizer.pad_token_id)
-
-        sequence_output = self.model(
-                input_ids,
-                attention_mask=attention_mask)[0]
-#         print("size of sequence_output: " + str(sequence_output.size()))
-
-        # The pretrained hotpotqa model wasn't trained with padding, so remove padding tokens
-        # before computing loss and decoding.
-        padding_len = input_ids[0].eq(self.tokenizer.pad_token_id).sum()
-        if padding_len > 0:
-            sequence_output = sequence_output[:, :-padding_len]
-#         print("size of sequence_output after removing padding: " + str(sequence_output.size()))
-              
+        if 'longformer' in self.args.model_path:
+            
+            if(input_ids.size(0) > 1):
+                assert("multi rows per document")
+            # Each batch is one document, and each row of the batch is a chunck of the document.    ????
+            # Make sure all rows have the same question length.
+            
+     
+            # local attention everywhere
+            attention_mask = torch.ones(input_ids.shape, dtype=torch.long, device=input_ids.device)
+            
+            # global attention for the cls and all question tokens
+            question_end_index = self._get_special_index(input_ids, [QUESTION_END])
+    #         if(question_end_index.size(0) == 1):
+    #             attention_mask[:,:question_end_index.item()] = 2  
+    #         else:
+            attention_mask[:,:question_end_index[0].item()+1] = 2  # from <cls> until </q>
+    #             print("more than 1 <q> in: ", self.tokenizer.convert_ids_to_tokens(input_ids[0].tolist()) )
+            
+            # global attention for the sentence and paragraph special tokens  
+            sent_indexes = self._get_special_index(input_ids, [SENT_MARKER_END])
+            attention_mask[:, sent_indexes] = 2
+            
+            para_indexes = self._get_special_index(input_ids, [TITLE_START])
+            attention_mask[:, para_indexes] = 2       
+             
+    
+            # sliding_chunks implemenation of selfattention requires that seqlen is multiple of window size
+            input_ids, attention_mask = pad_to_window_size(
+                input_ids, attention_mask, self.args.attention_window, self.tokenizer.pad_token_id)
+    
+            sequence_output = self.model(
+                    input_ids,
+                    attention_mask=attention_mask)[0]
+    #         print("size of sequence_output: " + str(sequence_output.size()))
+    
+            # The pretrained hotpotqa model wasn't trained with padding, so remove padding tokens
+            # before computing loss and decoding.
+            padding_len = input_ids[0].eq(self.tokenizer.pad_token_id).sum()
+            if padding_len > 0:
+                sequence_output = sequence_output[:, :-padding_len]
+    #         print("size of sequence_output after removing padding: " + str(sequence_output.size()))
+        else:
+            sequence_output = self.model(input_ids, attention_mask=attention_mask)[0]      
         
         ###################################### layers on top of sequence_output ##################################
         
@@ -677,17 +683,14 @@ class hotpotqa(pl.LightningModule):
         # predict_support_sent = torch.cat([sp_sent_output_aux, sp_sent_output_t], dim=-1).contiguous() 
         
         outputs = (start_logits, end_logits, type_logits) #, sp_para_output_t, sp_sent_output_t)  
+        answer_loss, type_loss = self.loss_computation(start_positions, end_positions, start_logits, end_logits, q_type, type_logits)
         # answer_loss, type_loss, sp_para_loss, sp_sent_loss  = self.loss_computation(start_positions, end_positions, start_logits, end_logits, q_type, type_logits, sp_para, predict_support_para, sp_sent, predict_support_sent)
-        answer_loss, type_loss  = self.loss_computation(start_positions, end_positions, start_logits, end_logits, q_type, type_logits)
  
+        outputs = (answer_loss, type_loss,) + outputs    
         # outputs = (answer_loss, type_loss, sp_para_loss, sp_sent_loss,) + outputs    
-        outputs = (answer_loss, type_loss,) + outputs   
-        
         return outputs
-        
-    def loss_computation(self, start_positions, end_positions, start_logits, end_logits, q_type, type_logits):
- 
-    # def loss_computation(self, start_positions, end_positions, start_logits, end_logits, q_type, type_logits, sp_para, predict_support_para, sp_sent, predict_support_sent):
+    
+    def loss_computation(self, start_positions, end_positions, start_logits, end_logits, q_type, type_logits):  #, sp_para, predict_support_para, sp_sent, predict_support_sent):
         if start_positions is not None and end_positions is not None:
             # If we are on multi-GPU, split add a dimension
             if len(start_positions.size()) > 1:
@@ -714,13 +717,13 @@ class hotpotqa(pl.LightningModule):
             crossentropy = torch.nn.CrossEntropyLoss(ignore_index=-1)
             type_loss = crossentropy(type_logits, q_type)  
             
-            # crossentropy_average = torch.nn.CrossEntropyLoss(reduction = 'mean', ignore_index=-1)      
+            crossentropy_average = torch.nn.CrossEntropyLoss(reduction = 'mean', ignore_index=-1)      
             # sp_para_loss = crossentropy_average(predict_support_para.view(-1, 2), sp_para.view(-1))
             # sp_sent_loss = crossentropy_average(predict_support_sent.view(-1, 2), sp_sent.view(-1))      
  
             answer_loss = (start_loss + end_loss) / 2 
-        return answer_loss, type_loss
-        # return answer_loss, type_loss, sp_para_loss, sp_sent_loss 
+        return answer_loss, type_loss#, sp_para_loss, sp_sent_loss  
+
 
 #     %%add_to hotpotqa    
     def _get_special_index(self, input_ids, special_tokens):
@@ -792,7 +795,7 @@ class hotpotqa(pl.LightningModule):
         model = LightningDistributedDataParallel(
             model,
             device_ids=device_ids,
-            find_unused_parameters=True
+            find_unused_parameters=False
         )
         return model
 
@@ -812,26 +815,9 @@ class hotpotqa(pl.LightningModule):
 
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr)
 
-        self.scheduler = LambdaLR(optimizer, lr_lambda, last_epoch=-1)  # scheduler is not saved in the checkpoint, but global_step is, which is enough to restart
-        self.scheduler.step(self.global_step)
-        print("global step: ", self.global_step)
-        return optimizer
-    
-
-
-# ##### optimizer_step
-
-# In[ ]:
-
-
-
-    # A hook to do a lot of non-standard training tricks such as learning-rate warm-up
-    def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_i, second_order_closure=None):
-        optimizer.step()
-        optimizer.zero_grad()
-        self.scheduler.step(self.global_step)
-
-
+        scheduler = LambdaLR(optimizer, lr_lambda, last_epoch=-1)
+        return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
+     
 # ##### **training_step**
 
 # In[ ]:
@@ -855,12 +841,17 @@ class hotpotqa(pl.LightningModule):
 
     def training_step(self, batch, batch_nb):
         # do the forward pass and calculate the loss for a batch 
-        input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para, qid, answer = batch 
+        input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, qid, answer = batch 
+        # input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para, qid, answer = batch 
         # print("size of input_ids: " + str(input_ids.size())) 
-        output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type)
-        # output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para)
-        # answer_loss, type_loss, sp_para_loss, sp_sent_loss  = output[:4]
+        output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type) #, sp_sent, sp_para)
         answer_loss, type_loss = output[:2]
+        # answer_loss, type_loss = output[:4]
+        # answer_loss, type_loss, sp_para_loss, sp_sent_loss  = output[:4]
+        # print("answer_loss: ", answer_loss)
+        # print("type_loss: ", type_loss)
+        # print("sp_para_loss: ", sp_para_loss)
+        # print("sp_sent_loss: ", sp_sent_loss)
         
     #     loss  = answer_loss +  type_loss + sp_para_loss + sp_sent_loss
         loss = answer_loss + 5*type_loss #+ 10*sp_para_loss + 10*sp_sent_loss
@@ -869,9 +860,10 @@ class hotpotqa(pl.LightningModule):
         lr = loss.new_zeros(1) + self.trainer.optimizers[0].param_groups[0]['lr']  # loss.new_zeros(1) is tensor([0.]), converting 'lr' to tensor' by adding it.  
         
         tensorboard_logs = {'loss': loss, 'train_answer_loss': answer_loss, 'train_type_loss': type_loss, 
-                            #'train_sp_para_loss': sp_para_loss, 'train_sp_sent_loss': sp_sent_loss, 
-                            'lr': lr,
-                            'mem': torch.tensor(torch.cuda.memory_allocated(input_ids.device) / 1024 ** 3).type_as(loss) }
+                            # 'train_sp_para_loss': sp_para_loss, 'train_sp_sent_loss': sp_sent_loss, 
+                            'lr': lr #,
+                            # 'mem': torch.tensor(torch.cuda.memory_allocated(input_ids.device) / 1024 ** 3).type_as(loss) 
+        }
         return tensorboard_logs
 
  
@@ -919,16 +911,17 @@ class hotpotqa(pl.LightningModule):
 
    # When the validation_step is called, the model has been put in eval mode and PyTorch gradients have been disabled. At the end of validation, model goes back to training mode and gradients are enabled.
     def validation_step(self, batch, batch_nb):
-        input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para, qid, answer = batch
+        # input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para, qid, answer = batch
+        input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, qid, answer = batch
 
-        # output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para)
-        output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type)
-        # answer_loss, type_loss, sp_para_loss, sp_sent_loss, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output = output 
+        output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type) #, sp_sent, sp_para)
         answer_loss, type_loss, start_logits, end_logits, type_logits = output 
-        loss = answer_loss + 5*type_loss # + 10*sp_para_loss + 10*sp_sent_loss
+        # answer_loss, type_loss, sp_para_loss, sp_sent_loss, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output = output 
+        loss = answer_loss + 5*type_loss #+ 10*sp_para_loss + 10*sp_sent_loss
  
         # answers_pred, sp_sent_pred, sp_para_pred = self.decode(input_ids, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output)
-        answers_pred = self.decode(input_ids, start_logits, end_logits, type_logits)
+        answers_pred  = self.decode(input_ids, start_logits, end_logits, type_logits)
+ 
  
         if(len(answers_pred) != 1):
             print("len(answers_pred) != 1")
@@ -971,9 +964,9 @@ class hotpotqa(pl.LightningModule):
 #                 joint_f1 = torch.tensor(0.0).type_as(loss)
 #             joint_em = em * sp_sent_em 
 
-        # else:
-            # sp_sent_em, sp_sent_precision, sp_sent_recall, sp_sent_f1 = torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
-            # joint_em, joint_f1, joint_prec, joint_recall =  torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
+#         else:
+#             sp_sent_em, sp_sent_precision, sp_sent_recall, sp_sent_f1 = torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
+#             joint_em, joint_f1, joint_prec, joint_recall =  torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
 
 
         return { 'vloss': loss, 'answer_loss': answer_loss, 'type_loss': type_loss, 
@@ -981,6 +974,7 @@ class hotpotqa(pl.LightningModule):
                    'answer_score': pre_answer_score, 'f1': f1, 'prec':prec, 'recall':recall, 'em': em,
                 #   'sp_em': sp_sent_em, 'sp_f1': sp_sent_f1, 'sp_prec': sp_sent_precision, 'sp_recall': sp_sent_recall,
                 #   'joint_em': joint_em, 'joint_f1': joint_f1, 'joint_prec': joint_prec, 'joint_recall': joint_recall
+            
         }
 
 
@@ -989,9 +983,8 @@ class hotpotqa(pl.LightningModule):
 # In[ ]:
 
 
-    # def decode(self, input_ids, start_logits, end_logits, type_logits, sp_para_logits, sp_sent_logits):
-    def decode(self, input_ids, start_logits, end_logits, type_logits):
-        
+
+    def decode(self, input_ids, start_logits, end_logits, type_logits): #, sp_para_logits, sp_sent_logits):
 #         print("decode")
 
         question_end_index = self._get_special_index(input_ids, [QUESTION_END])
@@ -1061,17 +1054,17 @@ class hotpotqa(pl.LightningModule):
             assert False 
 
 
-#         sent_indexes = self._get_special_index(input_ids, [SENT_MARKER_END])
-#         para_indexes = self._get_special_index(input_ids, [TITLE_START])
+        # sent_indexes = self._get_special_index(input_ids, [SENT_MARKER_END])
+        # para_indexes = self._get_special_index(input_ids, [TITLE_START])
 
-#         s_to_p_map = []
-#         for s in sent_indexes:
-#             s_to_p = torch.where(torch.le(para_indexes, s))[0][-1]     # last para_index smaller or equal to s
-#             s_to_p_map.append(s_to_p.item()) 
-# #         print("s_to_p_map: " + str(s_to_p_map))
+        # s_to_p_map = []
+        # for s in sent_indexes:
+        #     s_to_p = torch.where(torch.le(para_indexes, s))[0][-1]     # last para_index smaller or equal to s
+        #     s_to_p_map.append(s_to_p.item()) 
+#         print("s_to_p_map: " + str(s_to_p_map))
 
-# #         print("sp_para_logits", sp_para_logits)
-# #         print("sp_sent_logits", sp_sent_logits)
+#         print("sp_para_logits", sp_para_logits)
+#         print("sp_sent_logits", sp_sent_logits)
  
 #         sp_para_top2 = sp_para_logits.squeeze().topk(k=2).indices
 #         if(sp_sent_logits.squeeze().size(0) > 12):
@@ -1090,8 +1083,8 @@ class hotpotqa(pl.LightningModule):
 #     #             sp_para_pred.add(sp_sent_to_para) 
 # #         print("sp_sent_pred: " + str(sp_sent_pred))
 # #         print("sp_para_pred: " + str(sp_para_pred))
-        # return (answers, sp_sent_pred, sp_para_pred)
-        return answers 
+#         return (answers, sp_sent_pred, sp_para_pred)
+        return answers
 
 
 # ###### metrics
@@ -1126,29 +1119,29 @@ class hotpotqa(pl.LightningModule):
         return int(normalize_answer(prediction) == normalize_answer(ground_truth))
 
 
-    def sp_metrics(self, prediction, gold): 
-        tp, fp, fn = 0, 0, 0
-        for e in prediction:
-            if e in gold:
-                tp += 1
-            else:
-                fp += 1 
-        for e in gold:
-            if e not in prediction:
-                fn += 1 
-        prec = 1.0 * tp / (tp + fp) if tp + fp > 0 else 0.0
-        recall = 1.0 * tp / (tp + fn) if tp + fn > 0 else 0.0
-        f1 = 2 * prec * recall / (prec + recall) if prec + recall > 0 else 0.0
-        em = 1.0 if fp + fn == 0 else 0.0 
-        return em, prec, recall, f1 
+    # def sp_metrics(self, prediction, gold): 
+    #     tp, fp, fn = 0, 0, 0
+    #     for e in prediction:
+    #         if e in gold:
+    #             tp += 1
+    #         else:
+    #             fp += 1 
+    #     for e in gold:
+    #         if e not in prediction:
+    #             fn += 1 
+    #     prec = 1.0 * tp / (tp + fp) if tp + fp > 0 else 0.0
+    #     recall = 1.0 * tp / (tp + fn) if tp + fn > 0 else 0.0
+    #     f1 = 2 * prec * recall / (prec + recall) if prec + recall > 0 else 0.0
+    #     em = 1.0 if fp + fn == 0 else 0.0 
+    #     return em, prec, recall, f1 
 
 
-# ##### validation_end
+# ##### validation_epoch_end
 
 # In[ ]:
 
-    def validation_end(self, outputs):
-        print("validation_end")
+    def validation_epoch_end(self, outputs):
+        print("validation_epoch_end")
         avg_loss = torch.stack([x['vloss'] for x in outputs]).mean()  
         avg_answer_loss = torch.stack([x['answer_loss'] for x in outputs]).mean()  
         avg_type_loss = torch.stack([x['type_loss'] for x in outputs]).mean()  
@@ -1245,8 +1238,8 @@ class hotpotqa(pl.LightningModule):
        
         return {'avg_val_loss': avg_loss, 'log': logs}
  
-    def sync_list_across_gpus(self, l, device, dtype):
-        l_tensor = torch.tensor(l, device=device, dtype=dtype)
+    def sync_list_across_gpus(self, list_to_sync, device, dtype):
+        l_tensor = torch.tensor(list_to_sync, device=device, dtype=dtype)
         gather_l_tensor = [torch.ones_like(l_tensor) for _ in range(self.trainer.world_size)]
         torch.distributed.all_gather(gather_l_tensor, l_tensor)
         return torch.cat(gather_l_tensor).tolist()
@@ -1260,13 +1253,13 @@ class hotpotqa(pl.LightningModule):
 
 
     def test_step(self, batch, batch_nb):
-        input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para, qid, answer = batch
+        # input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para, qid, answer = batch
+        input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, qid, answer = batch
 
         print("test_step of qid: ", qid, end="\t") 
-        # output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para)
-        output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type)
-        # answer_loss, type_loss, sp_para_loss, sp_sent_loss, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output = output
-        answer_loss, type_loss, start_logits, end_logits, type_logits = output
+        output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type) #, sp_sent, sp_para)
+        # answer_loss, type_loss, sp_para_loss, sp_sent_loss, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output = output 
+        answer_loss, type_loss, start_logits, end_logits, type_logits = output 
         loss = answer_loss + 5*type_loss #+ 10*sp_para_loss + 10*sp_sent_loss
  
         # answers_pred, sp_sent_pred, sp_para_pred = self.decode(input_ids, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output)
@@ -1286,18 +1279,18 @@ class hotpotqa(pl.LightningModule):
         print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer)
 
         return { 'vloss': loss, 'answer_loss': answer_loss, 'type_loss': type_loss, 
-        #'sp_para_loss': sp_para_loss, 'sp_sent_loss': sp_sent_loss, 
-                 'answer_score': pre_answer_score}
+                # 'sp_para_loss': sp_para_loss, 'sp_sent_loss': sp_sent_loss, 
+                'answer_score': pre_answer_score}
 
 
-# ##### test_end
+# ##### test_epoch_end
 
 # In[173]:
 
 
 
-    def test_end(self, outputs):
-        print("test_end")
+    def test_epoch_end(self, outputs):
+        print("test_epoch_end")
         avg_loss = torch.stack([x['vloss'] for x in outputs]).mean()  
         avg_answer_loss = torch.stack([x['answer_loss'] for x in outputs]).mean()  
         avg_type_loss = torch.stack([x['type_loss'] for x in outputs]).mean()  
@@ -1352,8 +1345,8 @@ class hotpotqa(pl.LightningModule):
         parser.add_argument("--train_dataset", type=str, required=False, help="Path to the training squad-format")  
         parser.add_argument("--dev_dataset", type=str, required=True, help="Path to the dev squad-format")  
         parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
-        parser.add_argument("--gpus", type=str, default='0',
-                            help="Comma separated list of gpus. Default is gpu 0. To use CPU, use --gpus "" ")
+        parser.add_argument("--gpus", type=int, default=1,
+                            help="Number of gpus. 0 for CPU")
         parser.add_argument("--warmup", type=int, default=1000, help="Number of warmup steps")
         parser.add_argument("--lr", type=float, default=0.00005, help="Maximum learning rate")
         parser.add_argument("--val_every", type=float, default=1.0, help="How often within one training epoch to check the validation set.")
@@ -1401,7 +1394,6 @@ def main(args):
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed) 
-         
 
     import shutil
     save_folder = os.path.join(args.save_dir, args.save_prefix)
@@ -1415,7 +1407,9 @@ def main(args):
     
     hotpotqa.__abstractmethods__=set()   # without this, got an error "Can't instantiate abstract class hotpotqa with abstract methods" if these two abstract methods are not implemented in the same cell where class hotpotqa defined 
     model = hotpotqa(args)
-    model.to('cuda')    # this is necessary to use gpu
+    
+    if torch.cuda.is_available():
+        model.to('cuda')    # this is necessary to use gpu
     
     
     # In[ ]:
@@ -1436,36 +1430,36 @@ def main(args):
         verbose=True,
         monitor='avg_val_f1',
         mode='max',
+        period=-1,
         prefix=''
     )
     
     
     # In[ ]:
-     
-    args.gpus = [int(x) for x in args.gpus.split(',')] if args.gpus is not "" else None
-    num_devices = len(args.gpus) #1 or len(args.gpus)
-      
+       
+    with open(args.train_dataset, "r", encoding='utf-8') as f: 
+        train_set_size = len(json.load(f))  
     
-    train_set_size = 90447 * args.train_percent    # hardcode dataset size. Needed to compute number of steps for the lr scheduler
-    args.steps = args.epochs * train_set_size / (args.batch_size * num_devices)
+    train_set_size = train_set_size * args.train_percent    # hardcode dataset size. Needed to compute number of steps for the lr scheduler
+    args.steps = args.epochs * train_set_size / (args.batch_size * max(args.gpus, 1))
     
-    print(f'>>>>>>> #train_set_size: {train_set_size}, #steps: {args.steps}, #epochs: {args.epochs}, batch_size: {args.batch_size * num_devices} <<<<<<<')
-    
+    print(f'>>>>>>> #train_set_size: {train_set_size}, #steps: {args.steps}, #epochs: {args.epochs}, batch_size: {args.batch_size * max(args.gpus, 1)} <<<<<<<')
     
     # In[ ]:
     
     
-    trainer = pl.Trainer(gpus=args.gpus, distributed_backend='ddp' if args.gpus and (len(args.gpus) > 1) else None,
-                         track_grad_norm=-1, max_epochs=args.epochs, early_stop_callback=None,
+    trainer = pl.Trainer(gpus=args.gpus, distributed_backend='ddp' if args.gpus and args.gpus > 1 else None,
+                         track_grad_norm=-1, max_epochs=args.epochs, early_stop_callback=None, replace_sampler_ddp=False,
                          accumulate_grad_batches=args.batch_size,
                          train_percent_check = args.train_percent,
                          val_check_interval=args.val_every,
+                         num_sanity_val_steps=2,
                          val_percent_check=args.val_percent_check,
                          test_percent_check=args.val_percent_check,
                          logger=logger if not args.disable_checkpointing else False,
                          checkpoint_callback=checkpoint_callback if not args.disable_checkpointing else False,
                          show_progress_bar=args.no_progress_bar,
-                         use_amp=not args.fp32, amp_level='O1',
+                         use_amp=not args.fp32 and args.gpus > 1, amp_level='O2',
                          check_val_every_n_epoch=1
                          )
      
@@ -1477,15 +1471,13 @@ def main(args):
     #     if not args.test:
     trainer.fit(model)
     
+    
     # In[ ]:
     
     print("Start Test at", end ='\t')
     print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
- 
     
     trainer.test(model)
-     
-    
     
     print("End at", end ='\t')
     print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))

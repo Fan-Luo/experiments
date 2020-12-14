@@ -162,8 +162,8 @@ def normalize_answer(s):
 # !conda install jupyter --yes
 
 # need to run this every time start this notebook, to add python3.7/site-packages to sys.pat, in order to import ipywidgets, which is used when RobertaTokenizer.from_pretrained('roberta-base') 
-import sys
-sys.path.insert(-1, '/xdisk/msurdeanu/fanluo/miniconda3/lib/python3.7/site-packages')
+# import sys
+# sys.path.insert(-1, '/xdisk/msurdeanu/fanluo/miniconda3/lib/python3.7/site-packages')
 
 import os
 from collections import defaultdict
@@ -175,7 +175,7 @@ import torch
 from torch.optim.lr_scheduler import LambdaLR
 
 from torch.utils.data import DataLoader, Dataset
-from transformers import RobertaTokenizer 
+from transformers import RobertaTokenizer, AutoModel, AutoConfig, AutoModelWithLMHead 
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -532,12 +532,16 @@ class hotpotqa(pl.LightningModule):
         # config = LongformerConfig.from_pretrained(self.args.model_path) 
         # config.attention_mode = self.args.attention_mode
         # model = Longformer.from_pretrained(self.args.model_path, config=config)
-        model = Longformer.from_pretrained(self.args.model_path) 
+        
+        if 'longformer' in self.args.model_path:
+            model = Longformer.from_pretrained(self.args.model_path) 
 
-        for layer in model.encoder.layer:
-            layer.attention.self.attention_mode = self.args.attention_mode
-            self.args.attention_window = layer.attention.self.attention_window
-
+            for layer in model.encoder.layer:
+                layer.attention.self.attention_mode = self.args.attention_mode
+                self.args.attention_window = layer.attention.self.attention_window
+        else:
+            model = AutoModel.from_pretrained(self.args.model_path)
+            
         print("Loaded model with config:")
         print(model.config)
 
@@ -603,47 +607,51 @@ class hotpotqa(pl.LightningModule):
 #%%add_to hotpotqa  
     def forward(self, input_ids, attention_mask, segment_ids, start_positions, end_positions, q_type, sp_sent, sp_para):
  
-        if(input_ids.size(0) > 1):
-            assert("multi rows per document")
-        # Each batch is one document, and each row of the batch is a chunck of the document.    ????
-        # Make sure all rows have the same question length.
-        
  
-        # local attention everywhere
-        attention_mask = torch.ones(input_ids.shape, dtype=torch.long, device=input_ids.device)
-        
-        # global attention for the cls and all question tokens
-        question_end_index = self._get_special_index(input_ids, [QUESTION_END])
-#         if(question_end_index.size(0) == 1):
-#             attention_mask[:,:question_end_index.item()] = 2  
-#         else:
-        attention_mask[:,:question_end_index[0].item()+1] = 2  # from <cls> until </q>
-#             print("more than 1 <q> in: ", self.tokenizer.convert_ids_to_tokens(input_ids[0].tolist()) )
-        
-        # global attention for the sentence and paragraph special tokens  
-        sent_indexes = self._get_special_index(input_ids, [SENT_MARKER_END])
-        attention_mask[:, sent_indexes] = 2
-        
-        para_indexes = self._get_special_index(input_ids, [TITLE_START])
-        attention_mask[:, para_indexes] = 2       
-         
-
-        # sliding_chunks implemenation of selfattention requires that seqlen is multiple of window size
-        input_ids, attention_mask = pad_to_window_size(
-            input_ids, attention_mask, self.args.attention_window, self.tokenizer.pad_token_id)
-
-        sequence_output = self.model(
-                input_ids,
-                attention_mask=attention_mask)[0]
-#         print("size of sequence_output: " + str(sequence_output.size()))
-
-        # The pretrained hotpotqa model wasn't trained with padding, so remove padding tokens
-        # before computing loss and decoding.
-        padding_len = input_ids[0].eq(self.tokenizer.pad_token_id).sum()
-        if padding_len > 0:
-            sequence_output = sequence_output[:, :-padding_len]
-#         print("size of sequence_output after removing padding: " + str(sequence_output.size()))
-              
+        if 'longformer' in self.args.model_path:
+            
+            if(input_ids.size(0) > 1):
+                assert("multi rows per document")
+            # Each batch is one document, and each row of the batch is a chunck of the document.    ????
+            # Make sure all rows have the same question length.
+            
+     
+            # local attention everywhere
+            attention_mask = torch.ones(input_ids.shape, dtype=torch.long, device=input_ids.device)
+            
+            # global attention for the cls and all question tokens
+            question_end_index = self._get_special_index(input_ids, [QUESTION_END])
+    #         if(question_end_index.size(0) == 1):
+    #             attention_mask[:,:question_end_index.item()] = 2  
+    #         else:
+            attention_mask[:,:question_end_index[0].item()+1] = 2  # from <cls> until </q>
+    #             print("more than 1 <q> in: ", self.tokenizer.convert_ids_to_tokens(input_ids[0].tolist()) )
+            
+            # global attention for the sentence and paragraph special tokens  
+            sent_indexes = self._get_special_index(input_ids, [SENT_MARKER_END])
+            attention_mask[:, sent_indexes] = 2
+            
+            para_indexes = self._get_special_index(input_ids, [TITLE_START])
+            attention_mask[:, para_indexes] = 2       
+             
+    
+            # sliding_chunks implemenation of selfattention requires that seqlen is multiple of window size
+            input_ids, attention_mask = pad_to_window_size(
+                input_ids, attention_mask, self.args.attention_window, self.tokenizer.pad_token_id)
+    
+            sequence_output = self.model(
+                    input_ids,
+                    attention_mask=attention_mask)[0]
+    #         print("size of sequence_output: " + str(sequence_output.size()))
+    
+            # The pretrained hotpotqa model wasn't trained with padding, so remove padding tokens
+            # before computing loss and decoding.
+            padding_len = input_ids[0].eq(self.tokenizer.pad_token_id).sum()
+            if padding_len > 0:
+                sequence_output = sequence_output[:, :-padding_len]
+    #         print("size of sequence_output after removing padding: " + str(sequence_output.size()))
+        else:
+            sequence_output = self.model(input_ids, attention_mask=attention_mask)[0]      
         
         ###################################### layers on top of sequence_output ##################################
         
@@ -785,7 +793,7 @@ class hotpotqa(pl.LightningModule):
         model = LightningDistributedDataParallel(
             model,
             device_ids=device_ids,
-            find_unused_parameters=True
+            find_unused_parameters=False
         )
         return model
 
@@ -805,26 +813,9 @@ class hotpotqa(pl.LightningModule):
 
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr)
 
-        self.scheduler = LambdaLR(optimizer, lr_lambda, last_epoch=-1)  # scheduler is not saved in the checkpoint, but global_step is, which is enough to restart
-        self.scheduler.step(self.global_step)
-        print("global step: ", self.global_step)
-        return optimizer
-    
-
-
-# ##### optimizer_step
-
-# In[ ]:
-
-
-
-    # A hook to do a lot of non-standard training tricks such as learning-rate warm-up
-    def optimizer_step(self, current_epoch, batch_nb, optimizer, optimizer_i, second_order_closure=None):
-        optimizer.step()
-        optimizer.zero_grad()
-        self.scheduler.step(self.global_step)
-
-
+        scheduler = LambdaLR(optimizer, lr_lambda, last_epoch=-1)
+        return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
+     
 # ##### **training_step**
 
 # In[ ]:
@@ -865,8 +856,9 @@ class hotpotqa(pl.LightningModule):
         
         tensorboard_logs = {'loss': loss, 'train_answer_loss': answer_loss, 'train_type_loss': type_loss, 
                             'train_sp_para_loss': sp_para_loss, 'train_sp_sent_loss': sp_sent_loss, 
-                            'lr': lr,
-                            'mem': torch.tensor(torch.cuda.memory_allocated(input_ids.device) / 1024 ** 3).type_as(loss) }
+                            'lr': lr #,
+                            # 'mem': torch.tensor(torch.cuda.memory_allocated(input_ids.device) / 1024 ** 3).type_as(loss) 
+        }
         return tensorboard_logs
 
  
@@ -1132,12 +1124,12 @@ class hotpotqa(pl.LightningModule):
         return em, prec, recall, f1 
 
 
-# ##### validation_end
+# ##### validation_epoch_end
 
 # In[ ]:
 
-    def validation_end(self, outputs):
-        print("validation_end")
+    def validation_epoch_end(self, outputs):
+        print("validation_epoch_end")
         avg_loss = torch.stack([x['vloss'] for x in outputs]).mean()  
         avg_answer_loss = torch.stack([x['answer_loss'] for x in outputs]).mean()  
         avg_type_loss = torch.stack([x['type_loss'] for x in outputs]).mean()  
@@ -1233,8 +1225,8 @@ class hotpotqa(pl.LightningModule):
        
         return {'avg_val_loss': avg_loss, 'log': logs}
  
-    def sync_list_across_gpus(self, l, device, dtype):
-        l_tensor = torch.tensor(l, device=device, dtype=dtype)
+    def sync_list_across_gpus(self, list_to_sync, device, dtype):
+        l_tensor = torch.tensor(list_to_sync, device=device, dtype=dtype)
         gather_l_tensor = [torch.ones_like(l_tensor) for _ in range(self.trainer.world_size)]
         torch.distributed.all_gather(gather_l_tensor, l_tensor)
         return torch.cat(gather_l_tensor).tolist()
@@ -1273,14 +1265,14 @@ class hotpotqa(pl.LightningModule):
         return { 'vloss': loss, 'answer_loss': answer_loss, 'type_loss': type_loss, 'sp_para_loss': sp_para_loss, 'sp_sent_loss': sp_sent_loss, 'answer_score': pre_answer_score}
 
 
-# ##### test_end
+# ##### test_epoch_end
 
 # In[173]:
 
 
 
-    def test_end(self, outputs):
-        print("test_end")
+    def test_epoch_end(self, outputs):
+        print("test_epoch_end")
         avg_loss = torch.stack([x['vloss'] for x in outputs]).mean()  
         avg_answer_loss = torch.stack([x['answer_loss'] for x in outputs]).mean()  
         avg_type_loss = torch.stack([x['type_loss'] for x in outputs]).mean()  
@@ -1334,8 +1326,8 @@ class hotpotqa(pl.LightningModule):
         parser.add_argument("--train_dataset", type=str, required=False, help="Path to the training squad-format")  
         parser.add_argument("--dev_dataset", type=str, required=True, help="Path to the dev squad-format")  
         parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
-        parser.add_argument("--gpus", type=str, default='0',
-                            help="Comma separated list of gpus. Default is gpu 0. To use CPU, use --gpus "" ")
+        parser.add_argument("--gpus", type=int, default=1,
+                            help="Number of gpus. 0 for CPU")
         parser.add_argument("--warmup", type=int, default=1000, help="Number of warmup steps")
         parser.add_argument("--lr", type=float, default=0.00005, help="Maximum learning rate")
         parser.add_argument("--val_every", type=float, default=1.0, help="How often within one training epoch to check the validation set.")
@@ -1396,7 +1388,8 @@ def main(args):
     
     hotpotqa.__abstractmethods__=set()   # without this, got an error "Can't instantiate abstract class hotpotqa with abstract methods" if these two abstract methods are not implemented in the same cell where class hotpotqa defined 
     model = hotpotqa(args)
-    model.to('cuda')    # this is necessary to use gpu
+    if torch.cuda.is_available():
+        model.to('cuda')    # this is necessary to use gpu
     
     
     # In[ ]:
@@ -1417,36 +1410,37 @@ def main(args):
         verbose=True,
         monitor='avg_val_f1',
         mode='max',
+        period=-1,
         prefix=''
     )
     
     
     # In[ ]:
-     
-    args.gpus = [int(x) for x in args.gpus.split(',')] if args.gpus is not "" else None
-    num_devices = len(args.gpus) #1 or len(args.gpus)
-      
+       
+    with open(args.train_dataset, "r", encoding='utf-8') as f: 
+        train_set_size = len(json.load(f))  
     
-    train_set_size = 90447 * args.train_percent    # hardcode dataset size. Needed to compute number of steps for the lr scheduler
-    args.steps = args.epochs * train_set_size / (args.batch_size * num_devices)
+    train_set_size = train_set_size * args.train_percent    # hardcode dataset size. Needed to compute number of steps for the lr scheduler
+    args.steps = args.epochs * train_set_size / (args.batch_size * max(args.gpus, 1))
     
-    print(f'>>>>>>> #train_set_size: {train_set_size}, #steps: {args.steps}, #epochs: {args.epochs}, batch_size: {args.batch_size * num_devices} <<<<<<<')
+    print(f'>>>>>>> #train_set_size: {train_set_size}, #steps: {args.steps}, #epochs: {args.epochs}, batch_size: {args.batch_size * max(args.gpus, 1)} <<<<<<<')
     
     
     # In[ ]:
     
     
-    trainer = pl.Trainer(gpus=args.gpus, distributed_backend='ddp' if args.gpus and (len(args.gpus) > 1) else None,
-                         track_grad_norm=-1, max_epochs=args.epochs, early_stop_callback=None,
+    trainer = pl.Trainer(gpus=args.gpus, distributed_backend='ddp' if args.gpus and args.gpus > 1 else None,
+                         track_grad_norm=-1, max_epochs=args.epochs, early_stop_callback=None, replace_sampler_ddp=False,
                          accumulate_grad_batches=args.batch_size,
                          train_percent_check = args.train_percent,
                          val_check_interval=args.val_every,
+                         num_sanity_val_steps=2,
                          val_percent_check=args.val_percent_check,
                          test_percent_check=args.val_percent_check,
                          logger=logger if not args.disable_checkpointing else False,
                          checkpoint_callback=checkpoint_callback if not args.disable_checkpointing else False,
                          show_progress_bar=args.no_progress_bar,
-                         use_amp=not args.fp32, amp_level='O1',
+                         use_amp=not args.fp32 and args.gpus > 1, amp_level='O2',
                          check_val_every_n_epoch=1
                          )
      
