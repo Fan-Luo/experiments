@@ -717,7 +717,7 @@ class hotpotqa(pl.LightningModule):
             crossentropy = torch.nn.CrossEntropyLoss(ignore_index=-1)
             type_loss = crossentropy(type_logits, q_type)  
             
-            crossentropy_average = torch.nn.CrossEntropyLoss(reduction = 'mean', ignore_index=-1)      
+            # crossentropy_average = torch.nn.CrossEntropyLoss(reduction = 'mean', ignore_index=-1)      
             # sp_para_loss = crossentropy_average(predict_support_para.view(-1, 2), sp_para.view(-1))
             # sp_sent_loss = crossentropy_average(predict_support_sent.view(-1, 2), sp_sent.view(-1))      
  
