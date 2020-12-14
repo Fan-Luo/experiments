@@ -153,7 +153,7 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
         context = " ".join(contexts)                                                     
         answer = normalize_answer(example["answer"])  
         
-        if (len(list(re.finditer(answer, context, re.IGNORECASE))) > 0):
+        if (answer != '' and len(list(re.finditer(answer, context, re.IGNORECASE))) > 0):
             answer_in_context += 1
         
         paras_phrases_graph = create_para_graph(paras_phrases)
@@ -215,14 +215,15 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
                         reduced_para.append(sent)
                         number_reduced_sentences += 1 
                         break     # if current sentence contains a phrase in path, this sentence is added to reduced sentence, and no need to continue checking whether it contains other phrases
-            raw_reduced_contexts.append([para_title, reduced_para])
+            if(len(reduced_para) > 0):
+                raw_reduced_contexts.append([para_title, reduced_para])
         assert number_reduced_sentences <= number_sentences                    
         reduced_context_ratios.append(number_reduced_sentences / number_sentences)    
         
         reduced_contexts = [TITLE_START + ' ' + lst[0]  + ' ' + TITLE_END + ' ' + (' ' + SENT_MARKER_END +' ').join(lst[1]) + ' ' + SENT_MARKER_END for lst in raw_reduced_contexts]    
         reduced_context = " ".join(reduced_contexts)  
         
-        if (len(list(re.finditer(answer, reduced_context, re.IGNORECASE))) > 0):
+        if (answer != '' and len(list(re.finditer(answer, reduced_context, re.IGNORECASE))) > 0):
             answer_in_reduced_context += 1
         
 

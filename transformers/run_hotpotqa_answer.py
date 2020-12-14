@@ -22,7 +22,8 @@ TITLE_START = '<t>'  # indicating the start of the title of a paragraph (also us
 TITLE_END = '</t>'   # indicating the end of the title of a paragraph
 SENT_MARKER_END = '[/sent]'  # indicating the end of the title of a sentence (used for loss over sentences)
 PAR = '[/par]'  # used for indicating end of the regular context and beginning of `yes/no/null` answers
-EXTRA_ANSWERS = " yes no null </s>"
+ 
+ 
 
 def create_example_dict(context, answer, id, question, is_sup_fact, is_supporting_para):
     return {
@@ -112,9 +113,7 @@ def convert_hotpot_to_squad_format(json_dict, gold_paras_only=False):
                     )
                 )
             ) 
-#     print("number of questions with answer not found in context: ", num_null_answer)
-#     print("number of questions with answer 'yes': ", num_yes_answer)
-#     print("number of questions with answer 'no': ", num_no_answer)
+
     return new_dict
 
 def normalize_answer(s):
@@ -215,18 +214,11 @@ class hotpotqaDataset(Dataset):
     def __init__(self, file_path, tokenizer, max_seq_len, max_doc_len, doc_stride,
                  max_num_answers, ignore_seq_with_no_answers, max_question_len):
         assert os.path.isfile(file_path)
-        self.file_path = file_path
-        if("reduced_context" not in self.file_path):
-            with open(self.file_path, "r", encoding='utf-8') as f:
-                print(f'reading file: {self.file_path}')
-                self.data_json = convert_hotpot_to_squad_format(json.load(f))['data']
+        self.file_path = file_path 
+        with open(self.file_path, "r", encoding='utf-8') as f:
+            print(f'reading file: {self.file_path}')
+            self.data_json = convert_hotpot_to_squad_format(json.load(f))['data']
                 
-        else:
-            with open(self.file_path, "r", encoding='utf-8') as f:
-                print(f'reading file: {self.file_path}')
-                self.data_json = json.load(f)['data']            
-    #             print(self.data_json[0])
-        
         
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
@@ -235,10 +227,6 @@ class hotpotqaDataset(Dataset):
         self.max_num_answers = max_num_answers
         self.ignore_seq_with_no_answers = ignore_seq_with_no_answers
         self.max_question_len = max_question_len
-        self.num_yes_answer = 0
-        self.num_no_answer = 0
-        self.num_null_answer = 0
-        self.num_empty_answer = 0
 
 #         print(tokenizer.all_special_tokens) 
     
@@ -270,6 +258,7 @@ class hotpotqaDataset(Dataset):
 # In[ ]:
 
     def one_example_to_tensors(self, example, idx):
+ 
         def is_whitespace(c):
             if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
                 return True
@@ -356,10 +345,10 @@ class hotpotqaDataset(Dataset):
                         all_doc_tokens.append(sub_token)
                 
                 # all sub tokens, truncate up to limit
-                all_doc_tokens = all_doc_tokens[:self.max_doc_len-8] 
+                all_doc_tokens = all_doc_tokens[:self.max_doc_len-7] 
 
-                # The -8 accounts for CLS, QUESTION_START, QUESTION_END， [/par]， yes， no， null， </s>   
-                max_tokens_per_doc_slice = self.max_seq_len - len(query_tokens) - 8
+                # The -7 accounts for CLS, QUESTION_START, QUESTION_END， [/par]， yes， no， </s>   
+                max_tokens_per_doc_slice = self.max_seq_len - len(query_tokens) - 7
                 if(max_tokens_per_doc_slice <= 0):
                     print("(max_tokens_per_doc_slice <= 0)")
                 assert max_tokens_per_doc_slice > 0
@@ -382,11 +371,14 @@ class hotpotqaDataset(Dataset):
                     slice_end = min(slice_start + max_tokens_per_doc_slice, len(all_doc_tokens))
 
                     doc_slice_tokens = all_doc_tokens[slice_start:slice_end]
-                    tokens = [self.tokenizer.cls_token] + [QUESTION_START] + query_tokens + [QUESTION_END] + doc_slice_tokens + [PAR] + self.tokenizer.tokenize("yes") + self.tokenizer.tokenize("no") + self.tokenizer.tokenize("null") +  [self.tokenizer.eos_token]   
-                    segment_ids = [0] * (len(query_tokens) + 3) + [1] * (len(doc_slice_tokens) + 5) 
-#                     if(len(segment_ids) != len(tokens)):
-#                         print("len(segment_ids): ", len(segment_ids))
-#                         print("len(tokens): ", len(tokens))
+                    tokens = [self.tokenizer.cls_token] + [QUESTION_START] + query_tokens + [QUESTION_END] + doc_slice_tokens + [PAR] +  self.tokenizer.tokenize("yes")  + self.tokenizer.tokenize("no")  +  [self.tokenizer.eos_token]   
+                    segment_ids = [0] * (len(query_tokens) + 3) + [1] * (len(doc_slice_tokens) + 4) 
+                    if(len(segment_ids) != len(tokens)):
+                        print("len(segment_ids): ", len(segment_ids))
+                        print("len(tokens): ", len(tokens))
+                        print("len(query_tokens): ", len(query_tokens))
+                        print("len(doc_slice_tokens): ", len(doc_slice_tokens))
+                        print("tokens: ", tokens)
                     assert len(segment_ids) == len(tokens)
 
                     input_ids = self.tokenizer.convert_tokens_to_ids(tokens)   
@@ -403,19 +395,16 @@ class hotpotqaDataset(Dataset):
                     if answer == '':
                         q_type = -1
                         start_positions.append(-1)   
-                        end_positions.append(-1)
-                        self.num_empty_answer += 1                       
+                        end_positions.append(-1)           
                     
                     elif answer == 'yes':
                         q_type = 1
-                        start_positions.append(len(tokens)-4)   
-                        end_positions.append(len(tokens)-4)
-                        self.num_yes_answer += 1
-                    elif answer == 'no':
-                        q_type = 2
                         start_positions.append(len(tokens)-3)   
                         end_positions.append(len(tokens)-3) 
-                        self.num_no_answer += 1
+                    elif answer == 'no':
+                        q_type = 2
+                        start_positions.append(len(tokens)-2)   
+                        end_positions.append(len(tokens)-2)  
                     else:
                         # keep all the occurences of answer in the context 
 #                         for m in re.finditer("\s?".join(answer.split()), context):   # "\s?".join(answer.split()) in order to match even with extra space in answer or context
@@ -429,11 +418,9 @@ class hotpotqaDataset(Dataset):
                         if(len(start_positions) > 0): 
                             q_type = 0
                         else: # answer not found in context
-                            q_type = 3 
-                            start_positions.append(len(tokens)-2)   
-                            end_positions.append(len(tokens)-2) 
-                            self.num_null_answer += 1
-
+                            q_type = -1
+                            start_positions.append(-1)   
+                            end_positions.append(-1) 
 
                     # answers from start_positions and end_positions if > self.max_num_answers
                     start_positions = start_positions[:self.max_num_answers]
@@ -524,7 +511,7 @@ class hotpotqa(pl.LightningModule):
         self.num_labels = 2
         self.qa_outputs = torch.nn.Linear(self.model.config.hidden_size, self.num_labels)
          
-        self.linear_type = torch.nn.Linear(self.model.config.hidden_size, 4)   #  question type (yes/no/span/null) classification 
+        self.linear_type = torch.nn.Linear(self.model.config.hidden_size, 3)   #  question type (yes/no/span) classification 
            
        
         # self.fnn_sp_sent = torch.nn.Sequential(
@@ -1069,9 +1056,7 @@ class hotpotqa(pl.LightningModule):
         elif p_type == 1: 
             answers.append({'text': 'yes', 'score': p_type_score})
         elif p_type == 2:
-            answers.append({'text': 'no', 'score': p_type_score})
-        elif p_type == 3:
-            answers.append({'text': 'null', 'score': p_type_score})
+            answers.append({'text': 'no', 'score': p_type_score}) 
         else:
             assert False 
 
@@ -1416,6 +1401,7 @@ def main(args):
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed) 
+         
 
     import shutil
     save_folder = os.path.join(args.save_dir, args.save_prefix)
@@ -1491,13 +1477,15 @@ def main(args):
     #     if not args.test:
     trainer.fit(model)
     
-    
     # In[ ]:
     
     print("Start Test at", end ='\t')
     print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
+ 
     
     trainer.test(model)
+     
+    
     
     print("End at", end ='\t')
     print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
