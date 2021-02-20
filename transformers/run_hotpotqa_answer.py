@@ -1050,28 +1050,34 @@ class hotpotqa(pl.LightningModule):
 #             print("sorted_answers: " + str(sorted_answers))
 
             if len(sorted_answers) == 0:
-                answers.append({'text': 'NoAnswerFound', 'score': -1000000})
+                answers.append({'text': 'NoAnswerFound', 'score': -1000000, 'start_logit': -1000000, 'end_logit': -1000000, 'p_type_score': p_type_score})
             else:
                 answer = sorted_answers[0]
                 answer_token_ids = input_ids[0, answer['start']: answer['end'] + 1]
 
                 answer_tokens = self.tokenizer.convert_ids_to_tokens(answer_token_ids.tolist())
+                
                 # remove [/sent], <t> and </t>
-                for special_token in [SENT_MARKER_END, TITLE_START, TITLE_END]:
+             
+                for special_token in [SENT_MARKER_END, TITLE_START, TITLE_END, self.tokenizer.sep_token]:
                     try:
+                        if(answer_tokens[0] == special_token):
+                            answer['start_logit'] = -2000000
+                        elif(answer_tokens[-1] == special_token):
+                            answer['end_logit'] = -2000000
+                            
                         answer_tokens.remove(special_token)
                     except:
                         pass
 
-                text = self.tokenizer.convert_tokens_to_string(answer_tokens)
-    #             score = (answer['start_logit'] + answer['end_logit'] + p_type_score) / 3
-                score = (torch.sigmoid(answer['start_logit']) + torch.sigmoid(answer['end_logit']) + torch.sigmoid(p_type_score)) / 3
-                answers.append({'text': text, 'score': score})
-    #             print("answers: " + str(answers))
+                text = self.tokenizer.convert_tokens_to_string(answer_tokens) 
+                score = (answer['start_logit'] + answer['end_logit'] + p_type_score) / 3
+                answers.append({'text': text, 'score': score, 'start_logit': answer['start_logit'], 'end_logit': answer['end_logit'], 'p_type_score': p_type_score})
+ 
         elif p_type == 1: 
-            answers.append({'text': 'yes', 'score': p_type_score})
+            answers.append({'text': 'yes', 'score': p_type_score, 'start_logit': -1000000, 'end_logit': -1000000, 'p_type_score': p_type_score})
         elif p_type == 2:
-            answers.append({'text': 'no', 'score': p_type_score}) 
+            answers.append({'text': 'no', 'score': p_type_score, 'start_logit': -1000000, 'end_logit': -1000000, 'p_type_score': p_type_score}) 
         else:
             assert False 
 
@@ -1292,6 +1298,9 @@ class hotpotqa(pl.LightningModule):
             assert(len(answers_pred) == 1)
 
         pre_answer_score = answers_pred[0]['score']  # (start_logit + end_logit + p_type_score) / 3
+        start_logit = answers_pred[0]['start_logit']
+        end_logit = answers_pred[0]['end_logit']
+        type_score = answers_pred[0]['p_type_score']
         pre_answer = _normalize_text(answers_pred[0]['text'])
         # print("pred answer_score: " + str(pre_answer_score))
         # print("pred answer_text: " + str(pre_answer)) 
@@ -1303,14 +1312,19 @@ class hotpotqa(pl.LightningModule):
         prec = torch.tensor(prec).type_as(loss)
         recall = torch.tensor(recall).type_as(loss)
         em = torch.tensor(em).type_as(loss)
-
+        
         print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer)
 
+        self.logger.experiment.log({'answer_loss': answer_loss, 'type_loss': type_loss, 
+                                    'answer_score': pre_answer_score, 'start_logit': start_logit, 'end_logit': end_logit, 'type_score': type_score,
+                                    'f1': f1, 'prec':prec, 'recall':recall, 'em': em 
+                                }) 
+        
         return { 'vloss': loss, 'answer_loss': answer_loss, 'type_loss': type_loss, 
-                 'answer_score': pre_answer_score, 'f1': f1, 'prec':prec, 'recall':recall, 'em': em
+                 'answer_score': pre_answer_score, 'start_logit': start_logit, 'end_logit': end_logit, 'type_score': type_score,
+                 'f1': f1, 'prec':prec, 'recall':recall, 'em': em
                 # 'sp_para_loss': sp_para_loss, 'sp_sent_loss': sp_sent_loss, 
                 }
-
 
 # ##### test_epoch_end
 
@@ -1370,7 +1384,7 @@ class hotpotqa(pl.LightningModule):
                 # 'avg_val_sp_para_loss': avg_sp_para_loss, 'avg_val_sp_sent_loss': avg_sp_sent_loss
                }
 
-        return logs 
+        return {'avg_test_loss': avg_loss, 'log': logs}
 
 # ##### add_model_specific_args
 
