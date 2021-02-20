@@ -95,14 +95,14 @@ def convert_hotpot_to_squad_format(json_dict, gold_paras_only=False):
         contexts = [TITLE_START + ' ' + lst[0]  + ' ' + TITLE_END + ' ' + (' ' + SENT_MARKER_END +' ').join(lst[1]) + ' ' + SENT_MARKER_END for lst in raw_contexts]    
         # extra space is fine, which would be ignored latter. most sentences has already have heading space, there are several no heading space; call the _normalize_text() which is same as the one used during evaluation
    
-        context = " ".join(contexts)  
+        # context = " ".join(contexts)  
         answer = _normalize_text(example["answer"])  
         
         if(len(answer) > 0):   # answer can be '' after normalize
             new_dict["data"].append(
                 create_para_dict(
                     create_example_dict(
-                        context=context,
+                        context=contexts,
                         answer=answer,
                         id = example["_id"],
                         question=_normalize_text(example["question"]),
@@ -298,7 +298,7 @@ class hotpotqaDataset(Dataset):
         
         for paragraph in example["paragraphs"]:  # example["paragraphs"] only contains one paragraph in hotpotqa
             # print("for paragraph in example['paragraphs']: ") 
-            context = paragraph["context"]
+            context = self.tokenizer.sep_token + ' ' + (' ' + self.tokenizer.sep_token + ' ').join(paragraph["context"] )   
             doc_tokens = []
             char_to_word_offset = []
             prev_is_whitespace = True
