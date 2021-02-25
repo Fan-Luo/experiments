@@ -88,11 +88,24 @@ def convert_hotpot_to_squad_format(json_dict, gold_paras_only=False):
         #     for sent_id, sent in enumerate(para_lines):
         #         is_sup_fact.append( (para_title, sent_id) in sp_set )    
         
-        for lst in raw_contexts:
-            lst[0] = _normalize_text(lst[0])
-            lst[1] = [_normalize_text(sent) for sent in lst[1]]
+        contexts = []
+        for para_id, para in enumerate(raw_contexts):
+            title = _normalize_text(para[0])
+            sents = [_normalize_text(sent) for sent in para[1]]
         
-        contexts = [TITLE_START + ' ' + lst[0]  + ' ' + TITLE_END + ' ' + (' ' + SENT_MARKER_END +' ').join(lst[1]) + ' ' + SENT_MARKER_END for lst in raw_contexts]    
+            # if("kept_para_sent" in example):    # reduceded context
+            #     sent_joint = ''
+            #     for sent_id, sent in enumerate(sents):
+            #         if(sent_id > 0 and example["kept_para_sent"][para_id][sent_id] - example["kept_para_sent"][para_id][sent_id-1] > 1)
+            #             sent_joint += (' </s> ' + sent + ' ' + SENT_MARKER_END )   # </s> indicates at least one sentence is removed
+            #         else: 
+            #             sent_joint += (sent + ' ' + SENT_MARKER_END ) 
+            # else:
+            sent_joint =  (' ' + SENT_MARKER_END +' ').join(sents) + ' ' + SENT_MARKER_END    
+            
+            contexts.append(TITLE_START + ' ' + title + ' ' + TITLE_END + ' ' +  sent_joint)
+        
+        # contexts = [TITLE_START + ' ' + lst[0]  + ' ' + TITLE_END + ' ' + (' ' + SENT_MARKER_END +' ').join(lst[1]) + ' ' + SENT_MARKER_END for lst in raw_contexts]    
         # extra space is fine, which would be ignored latter. most sentences has already have heading space, there are several no heading space; call the _normalize_text() which is same as the one used during evaluation
    
         # context = " ".join(contexts)  
@@ -699,13 +712,11 @@ class hotpotqa(pl.LightningModule):
         # sp_sent_output_aux = torch.zeros(sp_sent_output_t.shape, dtype=torch.float, device=sp_sent_output_t.device) 
         # predict_support_sent = torch.cat([sp_sent_output_aux, sp_sent_output_t], dim=-1).contiguous() 
         
-        outputs = (start_logits, end_logits, type_logits) #, sp_para_output_t, sp_sent_output_t)  
         answer_loss, type_loss = self.loss_computation(start_positions, end_positions, start_logits, end_logits, q_type, type_logits)
         # answer_loss, type_loss, sp_para_loss, sp_sent_loss  = self.loss_computation(start_positions, end_positions, start_logits, end_logits, q_type, type_logits, sp_para, predict_support_para, sp_sent, predict_support_sent)
+         
  
-        outputs = (answer_loss, type_loss,) + outputs    
-        # outputs = (answer_loss, type_loss, sp_para_loss, sp_sent_loss,) + outputs    
-        return outputs
+        return answer_loss, type_loss, start_logits, end_logits, type_logits
     
     def loss_computation(self, start_positions, end_positions, start_logits, end_logits, q_type, type_logits):  #, sp_para, predict_support_para, sp_sent, predict_support_sent):
         if start_positions is not None and end_positions is not None:
@@ -1505,7 +1516,7 @@ def main(args):
     # In[ ]:
     
     
-    trainer = pl.Trainer(gpus=gpu_ids, distributed_backend='ddp' if gpu_ids and (len(gpu_ids) > 1) else None,
+    trainer = pl.Trainer(gpus=-1, distributed_backend='ddp' if gpu_ids and (len(gpu_ids) > 1) else None,
                          track_grad_norm=-1, max_epochs=args.epochs, early_stop_callback=None, replace_sampler_ddp=False,
                          accumulate_grad_batches=args.batch_size,
                          train_percent_check = args.train_percent,

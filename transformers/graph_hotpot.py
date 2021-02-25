@@ -18,24 +18,24 @@ SENT_MARKER_END = '[/sent]'  # indicating the end of the title of a sentence (us
 PAR = '[/par]'  # used for indicating end of the regular context and beginning of `yes/no/null` answers
 EXTRA_ANSWERS = " yes no null </s>"
 
-def create_example_dict(context, answer, id, question, is_sup_fact, is_supporting_para):
-    return {
-        "context": context,
-        "qas": [                        # each context corresponds to only one qa in hotpotqa
-            {
-                "answer": answer,
-                "id": id,
-                "question": question,
-                "is_sup_fact": is_sup_fact,
-                "is_supporting_para": is_supporting_para
-            }
-        ],
-    }
+# def create_example_dict(context, answer, id, question, is_sup_fact, is_supporting_para):
+#     return {
+#         "context": context,
+#         "qas": [                        # each context corresponds to only one qa in hotpotqa
+#             {
+#                 "answer": answer,
+#                 "id": id,
+#                 "question": question,
+#                 "is_sup_fact": is_sup_fact,
+#                 "is_supporting_para": is_supporting_para
+#             }
+#         ],
+#     }
 
-def create_para_dict(example_dicts):
-    if type(example_dicts) == dict:
-        example_dicts = [example_dicts]   # each paragraph corresponds to only one [context, qas] in hotpotqa
-    return {"paragraphs": example_dicts} 
+# def create_para_dict(example_dicts):
+#     if type(example_dicts) == dict:
+#         example_dicts = [example_dicts]   # each paragraph corresponds to only one [context, qas] in hotpotqa
+#     return {"paragraphs": example_dicts} 
     
 
 from matplotlib.cbook import flatten 
@@ -115,50 +115,42 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
 
     """
     noun_tags = ['NN', 'NNS', 'NNP', 'NNPS']
-    new_dict = {"data": []} 
+    # new_dict = {"data": []} 
+    data = []
     common_phrases_num_le2 = 0
     extended = 0
-    answer_in_reduced_context = 0
-    answer_in_context = 0
+    # answer_in_reduced_context = 0
+    # answer_in_context = 0
     reduced_context_ratios = []
     for e_id, example in enumerate(json_dict): 
-
-        support_para = set(
-            para_title for para_title, _ in example["supporting_facts"]
-        )
-        sp_set = set(list(map(tuple, example['supporting_facts'])))
         
         raw_contexts = example["context"]
 #         if gold_paras_only: 
 #        raw_contexts = [lst for lst in raw_contexts if lst[0] in support_para]    
-        is_supporting_para = []  # a boolean list with 10 True/False elements, one for each paragraph
-        is_sup_fact = []         # a boolean list with True/False elements, one for each context sentence
         paras_phrases = []                                                # phrases of all 10 paragraghs
+        # contexts = []
         for i, para_context in enumerate(raw_contexts):                   # each para
-            is_supporting_para.append(para_context[0] in support_para)   
-            for sent_id, sent in enumerate(para_context[1]):
-                is_sup_fact.append( (para_context[0], sent_id) in sp_set )  
- 
-            para_context[0] = normalize_answer(para_context[0])
-            para_context[1] = [normalize_answer(sent) for sent in para_context[1]]
+            title = _normalize_text(para_context[0])          
+            sents = [_normalize_text(sent) for sent in para_context[1]]
 
-            sent_docs = list(nlp.pipe([para_context[0]] + para_context[1]))   
+            sent_docs = list(nlp.pipe([title] + sents))   
             para_phrases = []                                        
             for sent_doc in sent_docs:                                    # each sent in a para
                 sent_phrases = [(p.text, p.rank) for p in sent_doc._.phrases if(p.text != '')]  # phrases from each sentence 
                 para_phrases.append(sent_phrases)       
             paras_phrases.append(para_phrases)    
 
-        contexts = [TITLE_START + ' ' + lst[0]  + ' ' + TITLE_END + ' ' + (' ' + SENT_MARKER_END +' ').join(lst[1]) + ' ' + SENT_MARKER_END for lst in raw_contexts]  
-        context = " ".join(contexts)                                                     
-        answer = normalize_answer(example["answer"])  
+        #     contexts.append(TITLE_START + ' ' + title  + ' ' + TITLE_END + ' ' + (' ' + SENT_MARKER_END +' ').join(sents) + ' ' + SENT_MARKER_END)
+
+        # context = " ".join(contexts)                                                     
+        # answer = _normalize_text(example["answer"])  
         
-        if (answer != '' and len(list(re.finditer(answer, context, re.IGNORECASE))) > 0):
-            answer_in_context += 1
+        # if (answer != '' and len(list(re.finditer(answer, context, re.IGNORECASE))) > 0):
+        #     answer_in_context += 1
         
         paras_phrases_graph = create_para_graph(paras_phrases)
         
-        question = normalize_answer(example["question"])
+        question = _normalize_text(example["question"])
         question_doc = nlp(question)
         question_phrases = [(p.text, p.rank) for p in question_doc._.phrases if(p.text != '')] 
         question_phrases_text = [p[0] for p in question_phrases]
@@ -182,13 +174,12 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
             extended_phrases = question_phrases_text
             
         # print("extended_phrases: ", extended_phrases)
-         
-        
-#         example["question_phrases"] = question_phrases
-#         example["paras_phrases"] = paras_phrases
-#         example["common_phrases"] = common_phrases
-#         example["path_phrases"] = path_phrases
-#         example["extended_phrases"] = extended_phrases
+        example["question_phrases"] = question_phrases
+        example["paras_phrases"] = paras_phrases
+    #     example["all_sent_phrases_text"] = all_sent_phrases_text
+        example["common_phrases"] = common_phrases
+        example["path_phrases"] = path_phrases
+        example["extended_phrases"] = extended_phrases 
 #         print("context: ", context)    
 #         print("\n\n") 
 #         print("question_phrases: ", question_phrases)    
@@ -203,61 +194,70 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
         raw_reduced_contexts = []     # sentences contain one of the phrases in the path 
         number_sentences = 0
         number_reduced_sentences = 0 
-        for para_id, (para_title, para_lines) in enumerate(raw_contexts):
-# #             print("para_id, para_title, para_lines",para_id, para_title, para_lines)
- 
+        kept_para_sent = []
+        for para_id, (para_title, para_lines) in enumerate(raw_contexts): 
+            
             number_sentences += len(para_lines)
             reduced_para = []
+            kept_sent = []
             for sent_id, sent in enumerate(para_lines):
- 
-                for phrase in path_phrases:
-                    if(phrase in list(flatten(paras_phrases[para_id][sent_id]))[::2]):  # every other element is text, others are rank
+    
+                for phrase in extended_phrases:
+                    # every other element is text, others are rank 
+                    if(phrase in list(flatten(paras_phrases[para_id][sent_id+1]))[::2]):  # paras_phrases[para_id][0] are phrases from the title
                         reduced_para.append(sent)
                         number_reduced_sentences += 1 
-                        break     # if current sentence contains a phrase in path, this sentence is added to reduced sentence, and no need to continue checking whether it contains other phrases
+                        kept_sent.append(sent_id)
+                        break     # if current sentence contains one of the extended_phrases, this sentence is added to reduced sentence, and no need to continue checking whether it contains other phrases
+            
             if(len(reduced_para) > 0):
                 raw_reduced_contexts.append([para_title, reduced_para])
+                kept_para_sent.append(kept_sent)
+            else:
+                for phrase in extended_phrases:
+                    if(phrase in list(flatten(paras_phrases[para_id][0]))[::2]):   # only tilte contains one of the extended_phrases
+                        raw_reduced_contexts.append([para_title, []])
+                        kept_para_sent.append(kept_sent)
+                        break
+                    
+            
+                    
         assert number_reduced_sentences <= number_sentences                    
         reduced_context_ratios.append(number_reduced_sentences / number_sentences)    
         
-        reduced_contexts = [TITLE_START + ' ' + lst[0]  + ' ' + TITLE_END + ' ' + (' ' + SENT_MARKER_END +' ').join(lst[1]) + ' ' + SENT_MARKER_END for lst in raw_reduced_contexts]    
-        reduced_context = " ".join(reduced_contexts)  
-        
-        if (answer != '' and len(list(re.finditer(answer, reduced_context, re.IGNORECASE))) > 0):
-            answer_in_reduced_context += 1
-        
+     
+        supporting_facts = []
+        support_para = set(
+            para_title for para_title, _ in example["supporting_facts"]
+        )
+        sp_set = set(list(map(tuple, example['supporting_facts'])))                       # a list of (title, sent_id in orignal context) 
+        for i, para_reduced_context in enumerate(raw_reduced_contexts):                   # each para
+            if(para_reduced_context[0] in support_para):
+                for sent_id, orig_sent_id in enumerate(kept_para_sent[i]):
+                    if( (para_reduced_context[0], orig_sent_id) in sp_set ):
+                        supporting_facts.append([para_reduced_context[0], sent_id])
 
-        new_dict["data"].append(
-            create_para_dict(
-                create_example_dict(
-                    context=reduced_context,
-                    answer=answer,
-                    id = example["_id"],
-                    question=example["question"],
-                    is_sup_fact = is_sup_fact,
-                    is_supporting_para = is_supporting_para 
-                )
-            )
-        )         
+        example['reduced_context'] = raw_reduced_contexts
+        example['supporting_facts'] = supporting_facts
+        example['kept_para_sent'] = kept_para_sent
+        data.append(example)         
         
         # print("number_sentences: ", number_sentences)
         # print("number_reduced_sentences: ", number_reduced_sentences)
 
 #         now = datetime.now()
 #         current_time = now.strftime("%H:%M:%S")
-#         print("Time =", current_time)
-    print("number of questions with answer in context: ", answer_in_context)
-    print("common_phrases_num_le2: ", common_phrases_num_le2) 
-    print("number of questions with extended phrases: ", extended)
-    print("number of questions with answer in reduced_context: ", answer_in_reduced_context)
+#         print("Time =", current_time) 
+    print("number of questions with at least 2 phrases shared by question and context: ", common_phrases_num_le2) 
+    print("number of questions with extended phrases from context besides question: ", extended) 
     print("reduced context ratios: ", reduced_context_ratios)
     print("average ratio of reduced context: ", sum(reduced_context_ratios)/len(reduced_context_ratios))
     
     with open(outfile, 'w') as out_file:
-        json.dump(new_dict, out_file)
+        json.dump(data, out_file)
     return  
 
-def normalize_answer(s):
+def _normalize_text(s):
 
     def remove_articles(text):
         return re.sub(r'\b(a|an|the)\b', ' ', text)
