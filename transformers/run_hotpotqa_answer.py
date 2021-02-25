@@ -93,15 +93,15 @@ def convert_hotpot_to_squad_format(json_dict, gold_paras_only=False):
             title = _normalize_text(para[0])
             sents = [_normalize_text(sent) for sent in para[1]]
         
-            # if("kept_para_sent" in example):    # reduceded context
-            #     sent_joint = ''
-            #     for sent_id, sent in enumerate(sents):
-            #         if(sent_id > 0 and example["kept_para_sent"][para_id][sent_id] - example["kept_para_sent"][para_id][sent_id-1] > 1)
-            #             sent_joint += (' </s> ' + sent + ' ' + SENT_MARKER_END )   # </s> indicates at least one sentence is removed
-            #         else: 
-            #             sent_joint += (sent + ' ' + SENT_MARKER_END ) 
-            # else:
-            sent_joint =  (' ' + SENT_MARKER_END +' ').join(sents) + ' ' + SENT_MARKER_END    
+            if("kept_para_sent" in example):    # reduceded context
+                sent_joint = ''
+                for sent_id, sent in enumerate(sents):
+                    if(sent_id > 0 and example["kept_para_sent"][para_id][sent_id] - example["kept_para_sent"][para_id][sent_id-1] > 1):
+                        sent_joint += (' </s> ' + sent + ' ' + SENT_MARKER_END )   # </s> indicates at least one sentence is removed
+                    else: 
+                        sent_joint += (sent + ' ' + SENT_MARKER_END ) 
+            else:
+                sent_joint =  (' ' + SENT_MARKER_END +' ').join(sents) + ' ' + SENT_MARKER_END    
             
             contexts.append(TITLE_START + ' ' + title + ' ' + TITLE_END + ' ' +  sent_joint)
         
