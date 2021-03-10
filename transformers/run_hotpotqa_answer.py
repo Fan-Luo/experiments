@@ -1326,10 +1326,15 @@ class hotpotqa(pl.LightningModule):
         
         print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer)
 
-        self.logger.experiment.log({'answer_loss': answer_loss, 'type_loss': type_loss, 
-                                    'answer_score': pre_answer_score, 'start_logit': start_logit, 'end_logit': end_logit, 'type_score': type_score,
+        
+        self.logger.log_hyperparams({'start_logits': start_logits.cpu(), 'end_logits': end_logits.cpu(), 'type_logits': type_logits.cpu()})   # use log_hyperparams to log non-scalars
+        
+        self.logger.log_metrics({'answer_loss': answer_loss, 'type_loss': type_loss, 
+                                    'answer_score': pre_answer_score, 'start_logit': start_logit, 'end_logit': end_logit,  
+                                    'type_score': type_score,
                                     'f1': f1, 'prec':prec, 'recall':recall, 'em': em 
                                 }) 
+       
         
         return { 'vloss': loss, 'answer_loss': answer_loss, 'type_loss': type_loss, 
                  'answer_score': pre_answer_score, 'start_logit': start_logit, 'end_logit': end_logit, 'type_score': type_score,
@@ -1460,10 +1465,11 @@ def main(args):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed) 
 
-    import shutil
-    save_folder = os.path.join(args.save_dir, args.save_prefix)
-    if os.path.exists(save_folder):
-        shutil.rmtree(save_folder, ignore_errors=True)  #delete non-empty folder
+    if not args.test:     # if it needs to train, remove exsiting folder
+        import shutil
+        save_folder = os.path.join(args.save_dir, args.save_prefix)
+        if os.path.exists(save_folder):
+            shutil.rmtree(save_folder, ignore_errors=True)  #delete non-empty folder
     
     # In[ ]:
     
@@ -1537,8 +1543,8 @@ def main(args):
     # In[ ]:
     
     
-    #     if not args.test:
-    trainer.fit(model)
+    if not args.test:
+        trainer.fit(model)
     
     
     # In[ ]:
