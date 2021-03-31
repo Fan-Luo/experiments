@@ -54,8 +54,7 @@ nlp.add_pipe(tr.PipelineComponent, name='textrank', last=True)
 print(nlp.pipeline)   
 # import neuralcoref
 # neuralcoref.add_to_pipe(nlp)
- 
-from matplotlib.cbook import flatten
+  
 
 #!conda install networkx --yes
 import networkx as nx

@@ -1324,10 +1324,7 @@ class hotpotqa(pl.LightningModule):
         recall = torch.tensor(recall).type_as(loss)
         em = torch.tensor(em).type_as(loss)
         
-        print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer)
-
-        
-        self.logger.log_hyperparams({'start_logits': start_logits.cpu(), 'end_logits': end_logits.cpu(), 'type_logits': type_logits.cpu()})   # use log_hyperparams to log non-scalars
+        print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer, "\tstart_logits:\t", start_logits.cpu(), "\tend_logits:\t", end_logits.cpu(), "\ttype_logits:\t", type_logits.cpu())
         
         self.logger.log_metrics({'answer_loss': answer_loss, 'type_loss': type_loss, 
                                     'answer_score': pre_answer_score, 'start_logit': start_logit, 'end_logit': end_logit,  
