@@ -10,13 +10,13 @@ from datetime import datetime
 import pytz 
 timeZ_Az = pytz.timezone('US/Mountain') 
 
-QUESTION_START = '[question]'
-QUESTION_END = '[/question]' 
-TITLE_START = '<t>'  # indicating the start of the title of a paragraph (also used for loss over paragraphs)
-TITLE_END = '</t>'   # indicating the end of the title of a paragraph
-SENT_MARKER_END = '[/sent]'  # indicating the end of the title of a sentence (used for loss over sentences)
-PAR = '[/par]'  # used for indicating end of the regular context and beginning of `yes/no/null` answers
-EXTRA_ANSWERS = " yes no null </s>"
+# QUESTION_START = '[question]'
+# QUESTION_END = '[/question]' 
+# TITLE_START = '<t> , '  # indicating the start of the title of a paragraph (also used for loss over paragraphs)
+# TITLE_END = ', </t> . '   # indicating the end of the title of a paragraph, add , to avoid tilte to be recognized as part of the first entity in the sentence after
+SENT_MARKER_END = ', </sent> , '  # indicating the end of the title of a sentence (used for loss over sentences)
+# PAR = '[/par]'  # used for indicating end of the regular context and beginning of `yes/no/null` answers
+# EXTRA_ANSWERS = " yes no null </s>"
 
 # def create_example_dict(context, answer, id, question, is_sup_fact, is_supporting_para):
 #     return {
@@ -40,8 +40,18 @@ EXTRA_ANSWERS = " yes no null </s>"
 
 from matplotlib.cbook import flatten 
 import spacy   
-import en_core_web_lg                         
-nlp = en_core_web_lg.load() 
+import en_core_web_lg          
+nlp1 = en_core_web_lg.load() 
+nlp2 = en_core_web_lg.load() 
+
+from spacy.symbols import ORTH, LEMMA, POS
+nlp1.tokenizer.add_special_case('</sent>', [{ ORTH: '</sent>', LEMMA: '</sent>', POS: 'SYM'}]) 
+nlp1.tokenizer.add_special_case('</t>', [{ORTH: '</t>', LEMMA: '</t>', POS: 'SYM'}]) 
+nlp1.tokenizer.add_special_case('<t>', [{ORTH: '<t>', LEMMA: '<t>', POS: 'SYM'}])  
+import neuralcoref
+neuralcoref.add_to_pipe(nlp1)
+
+
 #!python -m pip install pytextrank
 # Fan: make 3 changes in pytextrank.py 
 # 1. phrase_text = ' '.join(key[0] for key in phrase_key) 
@@ -50,11 +60,12 @@ nlp = en_core_web_lg.load()
 # 3. replace token.lemma_ with token.lemma_.lower().strip()
 import pytextrank
 tr = pytextrank.TextRank(pos_kept=["ADJ", "NOUN", "PROPN", "VERB", "NUM", "ADV"], chunk_type='both')  
-nlp.add_pipe(tr.PipelineComponent, name='textrank', last=True)
-print(nlp.pipeline)   
-# import neuralcoref
-# neuralcoref.add_to_pipe(nlp)
-  
+nlp2.add_pipe(tr.PipelineComponent, name='textrank', last=True)
+
+
+# %matplotlib inline
+# import matplotlib.pyplot as plt
+from matplotlib.cbook import flatten
 
 #!conda install networkx --yes
 import networkx as nx
@@ -123,6 +134,7 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
     reduced_context_ratios = []
     for e_id, example in enumerate(json_dict): 
         
+        print("_id: ", example["_id"])
         raw_contexts = example["context"]
 #         if gold_paras_only: 
 #        raw_contexts = [lst for lst in raw_contexts if lst[0] in support_para]    
@@ -131,8 +143,22 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
         for i, para_context in enumerate(raw_contexts):                   # each para
             title = _normalize_text(para_context[0])          
             sents = [_normalize_text(sent) for sent in para_context[1]]
-
-            sent_docs = list(nlp.pipe([title] + sents))   
+            
+            # resolve coreference
+            num_sents_before_coref_resolved = len(sents)
+            # print("numbe of sents before coref: ", num_sents_before_coref_resolved)
+            sents_joint =  (' ' + SENT_MARKER_END +' ').join(sents) 
+            sents_doc = nlp1(sents_joint)
+            # print("resolved_sents: ", sents_doc._.coref_resolved) 
+            sents_coref_resolved = sents_doc._.coref_resolved.split(SENT_MARKER_END)
+            num_sents_after_coref_resolved = len(sents_coref_resolved)
+            # print("numbe of sents after coref: ", num_sents_after_coref_resolved)
+            
+            if(num_sents_before_coref_resolved == num_sents_after_coref_resolved):
+                sent_docs = list(nlp2.pipe([title] + sents_coref_resolved))       
+            else:
+                sent_docs = list(nlp2.pipe([title] + sents))
+            
             para_phrases = []                                        
             for sent_doc in sent_docs:                                    # each sent in a para
                 sent_phrases = [(p.text, p.rank) for p in sent_doc._.phrases if(p.text != '')]  # phrases from each sentence 
@@ -150,7 +176,7 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
         paras_phrases_graph = create_para_graph(paras_phrases)
         
         question = _normalize_text(example["question"])
-        question_doc = nlp(question)
+        question_doc = nlp2(question)
         question_phrases = [(p.text, p.rank) for p in question_doc._.phrases if(p.text != '')] 
         question_phrases_text = [p[0] for p in question_phrases]
         
@@ -247,10 +273,10 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
 #         now = datetime.now()
 #         current_time = now.strftime("%H:%M:%S")
 #         print("Time =", current_time) 
-    print("number of questions with at least 2 phrases shared by question and context: ", common_phrases_num_le2) 
-    print("number of questions with extended phrases from context besides question: ", extended) 
-    print("reduced context ratios: ", reduced_context_ratios)
-    print("average ratio of reduced context: ", sum(reduced_context_ratios)/len(reduced_context_ratios))
+    # print("number of questions with at least 2 phrases shared by question and context: ", common_phrases_num_le2) 
+    # print("number of questions with extended phrases from context besides question: ", extended) 
+    # print("reduced context ratios: ", reduced_context_ratios)
+    # print("average ratio of reduced context: ", sum(reduced_context_ratios)/len(reduced_context_ratios))
     
     with open(outfile, 'w') as out_file:
         json.dump(data, out_file)
@@ -282,7 +308,8 @@ def main():
     args = parser.parse_args()
     with open(args.datafile, "r", encoding='utf-8') as f:  
         reduce_context_with_phares_graph(json.load(f), args.outfile)  
-
+    
+    print("End Time =", current_time)
 
 if __name__ == "__main__":
     main()
