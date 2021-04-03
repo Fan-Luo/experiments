@@ -1,9 +1,7 @@
 
 from datetime import datetime
 
-now = datetime.now()
-current_time = now.strftime("%H:%M:%S")
-print("Start Time =", current_time)
+
 
 import tqdm 
 from datetime import datetime 
@@ -49,7 +47,7 @@ nlp1.tokenizer.add_special_case('</sent>', [{ ORTH: '</sent>', LEMMA: '</sent>',
 nlp1.tokenizer.add_special_case('</t>', [{ORTH: '</t>', LEMMA: '</t>', POS: 'SYM'}]) 
 nlp1.tokenizer.add_special_case('<t>', [{ORTH: '<t>', LEMMA: '<t>', POS: 'SYM'}])  
 import neuralcoref
-neuralcoref.add_to_pipe(nlp1)
+neuralcoref.add_to_pipe(nlp1, greedyness=0.55) # between 0 and 1. The default value is 0.5.
 
 
 #!python -m pip install pytextrank
@@ -63,6 +61,7 @@ tr = pytextrank.TextRank(pos_kept=["ADJ", "NOUN", "PROPN", "VERB", "NUM", "ADV"]
 nlp2.add_pipe(tr.PipelineComponent, name='textrank', last=True)
 
 
+
 # %matplotlib inline
 # import matplotlib.pyplot as plt
 from matplotlib.cbook import flatten
@@ -73,33 +72,27 @@ import itertools
 
 
 def create_para_graph(paras_phrases):
-    G = nx.Graph()    
-    top_para_phrases = []                     # node of the first (top ranked) phrases from each para 
-    for para_phrases in paras_phrases:        # each para
-        top_sent_phrases = []                 # node of the first (top ranked) phrases from each sent 
-        for sent_phrases in para_phrases:     # each sent
+    G = nx.Graph()     
+    for pi, para_phrases in enumerate(paras_phrases):        # each para 
+        for si, sent_phrases in enumerate(para_phrases):     # each sent
             
             # complete graph for each sent
-            sent_G = nx.Graph()
-            sent_G.add_nodes_from([phrase[0] for phrase in sent_phrases])  
-            sent_G.add_edges_from(itertools.combinations([phrase[0] for phrase in sent_phrases], 2)) 
-            G = nx.compose(G, sent_G)         # union of the node sets and edge sets
-            
-            
-            # add an edge between the top ranked phrases from each sent to bridge sents
-            if(sent_phrases):
-                for top_sent_phrase in top_sent_phrases:
-                    G.add_edge(top_sent_phrase[0], sent_phrases[0][0])  # sent_phrases[0] is the top ranked phrase of the sentence
-                top_sent_phrases.append(sent_phrases[0])     
-            
-        top_sent_phrases = sorted(top_sent_phrases, key=lambda x: x[1], reverse=True)      # x[0]: phrase text,  x[1]: phrase rank
-        
-        
-        # add an edge between the top ranked phrases from each para to bridge paras
-        if(top_sent_phrases):
-            for top_para_phrase in top_para_phrases: 
-                G.add_edge(top_para_phrase[0], top_sent_phrases[0][0])  # top_sent_phrases[0] is the top ranked phrase of current para
-            top_para_phrases.append(top_sent_phrases[0])
+            G.add_nodes_from([(phrase[0], {"score": phrase[1]}) for phrase in sent_phrases])  
+            for node1, node2 in itertools.combinations([phrase[0] for phrase in sent_phrases], 2):
+                if(G.has_edge(node1, node2)):
+                    G[node1][node2]['source'].append((pi, si))
+                else:
+                    G.add_edge(node1, node2, source = [(pi, si)])
+                                               
+                                                
+            # add edge between title phrases and first phrase of the sentence
+            # si = 0, sent_phrases = para_phrases[0] are phrases from title 
+            for phrase in para_phrases[0]:
+                if(sent_phrases[0] != phrase):
+                    if(G.has_edge(sent_phrases[0], phrase)):
+                        G[sent_phrases[0]][phrase]['source'].append((pi, 'title', si))
+                    else:
+                        G.add_edge(sent_phrases[0], phrase, source = (pi, 'title', si)) 
      
     # Draw
 #     pos = nx.spring_layout(G)
@@ -127,22 +120,28 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
     noun_tags = ['NN', 'NNS', 'NNP', 'NNPS']
     # new_dict = {"data": []} 
     data = []
-    common_phrases_num_le2 = 0
-    extended = 0
-    # answer_in_reduced_context = 0
-    # answer_in_context = 0
-    reduced_context_ratios = []
+ 
     for e_id, example in enumerate(json_dict): 
         
-        print("_id: ", example["_id"])
+        print("_id: ", example["_id"], end ='\t')
+        print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
+        
         raw_contexts = example["context"]
 #         if gold_paras_only: 
 #        raw_contexts = [lst for lst in raw_contexts if lst[0] in support_para]    
         paras_phrases = []                                                # phrases of all 10 paragraghs
         # contexts = []
+ 
         for i, para_context in enumerate(raw_contexts):                   # each para
+        
+            print("process paragraph ", i, end ='\t')
+            print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
+        
             title = _normalize_text(para_context[0])          
             sents = [_normalize_text(sent) for sent in para_context[1]]
+            
+            print("after normalize text", end ='\t')
+            print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
             
             # resolve coreference
             num_sents_before_coref_resolved = len(sents)
@@ -159,52 +158,86 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
             else:
                 sent_docs = list(nlp2.pipe([title] + sents))
             
+            print("after coreference resolution", end ='\t')
+            print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
+            
+            
             para_phrases = []                                        
             for sent_doc in sent_docs:                                    # each sent in a para
                 sent_phrases = [(p.text, p.rank) for p in sent_doc._.phrases if(p.text != '')]  # phrases from each sentence 
                 para_phrases.append(sent_phrases)       
             paras_phrases.append(para_phrases)    
+            
+            print("after extract phrases", end ='\t')
+            print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
 
-        #     contexts.append(TITLE_START + ' ' + title  + ' ' + TITLE_END + ' ' + (' ' + SENT_MARKER_END +' ').join(sents) + ' ' + SENT_MARKER_END)
-
-        # context = " ".join(contexts)                                                     
-        # answer = _normalize_text(example["answer"])  
-        
-        # if (answer != '' and len(list(re.finditer(answer, context, re.IGNORECASE))) > 0):
-        #     answer_in_context += 1
-        
-        paras_phrases_graph = create_para_graph(paras_phrases)
+        all_sent_phrases_text =  list(flatten(paras_phrases))[::2]        # every other element is text, others are rank. 
         
         question = _normalize_text(example["question"])
         question_doc = nlp2(question)
         question_phrases = [(p.text, p.rank) for p in question_doc._.phrases if(p.text != '')] 
         question_phrases_text = [p[0] for p in question_phrases]
+        # question_phrases_text = set(list(flatten([p.split() for p in question_phrases_text])) + question_phrases_text) # add phrase words
+
+        print("after extracting phrases for the question", end ='\t')
+        print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
+
+        paras_phrases_graph = create_para_graph(paras_phrases)
+        Subgraphs = [paras_phrases_graph.subgraph(c).copy() for c in nx.connected_components(paras_phrases_graph)]
         
-        all_sent_phrases_text =  list(flatten(paras_phrases))[::2]        # every other element is text, others are rank. 
-        common_phrases = list(set(all_sent_phrases_text).intersection(question_phrases_text)) 
-        question_only_phrase = list(set(question_phrases_text).difference(common_phrases)) 
+        RG = nx.Graph()    # relevant components  
+        represnetive_nodes = []  # more likely to include the represnetive_nodes in the final path       
+        for S in Subgraphs:
+            for phrase in question_phrases_text:
+                if S.has_node(phrase):
+                    RG = nx.compose(RG, S)  # joint the relevant components
+                    represnetive_node = sorted(S.nodes.data('score'), key=lambda x: x[1], reverse=True)[0]  # node with highest score
+                    represnetive_nodes.append(represnetive_node) 
+                    break
         
-        # print("question_phrases_text: ", question_phrases_text)
-        # print("common_phrases: ", common_phrases)
-#         print("question_only_phrase: ", question_only_phrase)
+        for node1, node2 in itertools.combinations([phrase[0] for phrase in represnetive_nodes], 2):  
+            RG.add_edge(node1, node2, source = 'components')
+            
+            
+        common_phrases = []
+        mapping = {}
+        for phrase in RG.nodes:
+            for q_phrase in question_phrases_text:
+                if(phrase in q_phrase or q_phrase in phrase):
+                    if(phrase != q_phrase):
+                        mapping[phrase] = q_phrase   
+                    common_phrases.append(q_phrase)
         
+        RG = nx.relabel_nodes(RG, mapping)      # match 'english government position' with 'government position'
+
+        print("after graph construction", end ='\t')
+        print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
+ 
+        question_only_phrase = list(set(question_phrases_text).difference(common_phrases))
         if(len(common_phrases) > 1):
             common_phrases_num_le2 += 1
-            path_phrases = list(approx.steinertree.steiner_tree(paras_phrases_graph, common_phrases).nodes)  # to find the shortest path cover all common_phrases  
+            path_phrases = list(approx.steinertree.steiner_tree(RG, common_phrases).nodes)  # to find the shortest path cover all common_phrases  
             extended_phrases = path_phrases + question_only_phrase  
-            if(len(extended_phrases) > len(question_phrases_text)):
-                extended += 1
+            if(len(extended_phrases) > len(question_phrases_text)): 
         else: #  0 or 1 common phrases
             path_phrases = common_phrases             
             extended_phrases = question_phrases_text
+
             
-        # print("extended_phrases: ", extended_phrases)
+            
+        print("after path finding", end ='\t')
+        print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
+        
+
         example["question_phrases"] = question_phrases
         example["paras_phrases"] = paras_phrases
     #     example["all_sent_phrases_text"] = all_sent_phrases_text
         example["common_phrases"] = common_phrases
+        example["question_only_phrase"] = question_only_phrase
         example["path_phrases"] = path_phrases
         example["extended_phrases"] = extended_phrases 
+        example["relevant_graph_nodes"] = RG.nodes.data()
+        # print("extended_phrases: ", extended_phrases)
 #         print("context: ", context)    
 #         print("\n\n") 
 #         print("question_phrases: ", question_phrases)    
@@ -245,7 +278,8 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
                         kept_para_sent.append(kept_sent)
                         break
                     
-            
+        print("after reconstruct reduced context", end ='\t')
+        print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))    
                     
         assert number_reduced_sentences <= number_sentences                    
         reduced_context_ratios.append(number_reduced_sentences / number_sentences)    
@@ -262,10 +296,14 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
                     if( (para_reduced_context[0], orig_sent_id) in sp_set ):
                         supporting_facts.append([para_reduced_context[0], sent_id])
 
-        example['reduced_context'] = raw_reduced_contexts
+        print("after reconstruct reduced sp", end ='\t')
+        print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))    
+
+        example['context'] = raw_reduced_contexts
         example['supporting_facts'] = supporting_facts
         example['kept_para_sent'] = kept_para_sent
         data.append(example)         
+        
         
         # print("number_sentences: ", number_sentences)
         # print("number_reduced_sentences: ", number_reduced_sentences)
@@ -280,6 +318,10 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
     
     with open(outfile, 'w') as out_file:
         json.dump(data, out_file)
+        
+    print("after saving to file", end ='\t')
+    print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))            
+
     return  
 
 def _normalize_text(s):
@@ -309,8 +351,13 @@ def main():
     with open(args.datafile, "r", encoding='utf-8') as f:  
         reduce_context_with_phares_graph(json.load(f), args.outfile)  
     
-    print("End Time =", current_time)
+    
 
 if __name__ == "__main__":
+    print("Start at", end ='\t')
+    print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
+    
     main()
-
+    
+    print("End at", end ='\t')
+    print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
