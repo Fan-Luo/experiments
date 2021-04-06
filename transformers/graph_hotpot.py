@@ -1,8 +1,6 @@
 
 from datetime import datetime
-
-
-
+ 
 import tqdm 
 from datetime import datetime 
 import pytz 
@@ -36,7 +34,6 @@ SENT_MARKER_END = ', </sent> , '  # indicating the end of the title of a sentenc
 #     return {"paragraphs": example_dicts} 
     
 
-from matplotlib.cbook import flatten 
 import spacy   
 import en_core_web_lg          
 nlp1 = en_core_web_lg.load() 
@@ -69,7 +66,10 @@ from matplotlib.cbook import flatten
 #!conda install networkx --yes
 import networkx as nx
 import itertools 
-
+from networkx.readwrite import json_graph
+from fuzzywuzzy import fuzz
+from fuzzywuzzy import process
+from fuzzywuzzy import utils
 
 def create_para_graph(paras_phrases):
     G = nx.Graph()     
@@ -80,19 +80,19 @@ def create_para_graph(paras_phrases):
             G.add_nodes_from([(phrase[0], {"score": phrase[1]}) for phrase in sent_phrases])  
             for node1, node2 in itertools.combinations([phrase[0] for phrase in sent_phrases], 2):
                 if(G.has_edge(node1, node2)):
-                    G[node1][node2]['source'].append((pi, si))
+                    G[node1][node2]['src'].append((pi, si))
                 else:
-                    G.add_edge(node1, node2, source = [(pi, si)])
+                    G.add_edge(node1, node2, src = [(pi, si)])
                                                
                                                 
             # add edge between title phrases and first phrase of the sentence
             # si = 0, sent_phrases = para_phrases[0] are phrases from title 
             for phrase in para_phrases[0]:
-                if(sent_phrases[0] != phrase):
+                if(len(sent_phrases) > 0 and sent_phrases[0] != phrase):
                     if(G.has_edge(sent_phrases[0], phrase)):
-                        G[sent_phrases[0]][phrase]['source'].append((pi, 'title', si))
+                        G[sent_phrases[0]][phrase]['src'].append((pi, 'title', si))
                     else:
-                        G.add_edge(sent_phrases[0], phrase, source = (pi, 'title', si)) 
+                        G.add_edge(sent_phrases[0], phrase, src = [(pi, 'title', si)]) 
      
     # Draw
 #     pos = nx.spring_layout(G)
@@ -196,18 +196,30 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
                     break
         
         for node1, node2 in itertools.combinations([phrase[0] for phrase in represnetive_nodes], 2):  
-            RG.add_edge(node1, node2, source = 'components')
+            RG.add_edge(node1, node2, src = 'components')
             
             
-        common_phrases = []
+        # map pharse similar to question phrases to question phrase, then fnd common phrases
+        common_phrases = set()
         mapping = {}
         for phrase in RG.nodes:
-            for q_phrase in question_phrases_text:
-                if(phrase in q_phrase or q_phrase in phrase):
-                    if(phrase != q_phrase):
-                        mapping[phrase] = q_phrase   
-                    common_phrases.append(q_phrase)
-        
+            if(phrase in question_phrases_text):    # has a exact match
+                common_phrases.add(phrase)
+                continue
+                
+            # check partial match
+            if (utils.full_process(phrase) and question_phrases_text != []):    # only exectute when query is valid. To avoid WARNING:root:Applied processor reduces input query to empty string, all comparisons will have score 0.
+                simi_phrase, similarity = process.extractOne(phrase, question_phrases_text, scorer=fuzz.token_sort_ratio)  # most similar 
+                if(similarity > 70): 
+                    mapping[phrase] = simi_phrase   
+                    common_phrases.add(simi_phrase)
+                else:
+                    simi_phrase, similarity = process.extractOne(phrase, question_phrases_text, scorer=fuzz.partial_ratio)    # match 'woman' and 'businesswoman'
+                    if(similarity == 100):   # substring
+                        mapping[phrase] = simi_phrase   
+                        common_phrases.add(simi_phrase)
+                 
+                
         RG = nx.relabel_nodes(RG, mapping)      # match 'english government position' with 'government position'
 
         print("after graph construction", end ='\t')
@@ -215,28 +227,30 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
  
         question_only_phrase = list(set(question_phrases_text).difference(common_phrases))
         if(len(common_phrases) > 1):
-            common_phrases_num_le2 += 1
             path_phrases = list(approx.steinertree.steiner_tree(RG, common_phrases).nodes)  # to find the shortest path cover all common_phrases  
             extended_phrases = path_phrases + question_only_phrase  
-            if(len(extended_phrases) > len(question_phrases_text)): 
         else: #  0 or 1 common phrases
-            path_phrases = common_phrases             
+            path_phrases = list(common_phrases)             
             extended_phrases = question_phrases_text
 
-            
-            
         print("after path finding", end ='\t')
         print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
-        
 
+        P = RG.subgraph(extended_phrases)        
+        # print(P.edges(data=True))
+        path_data = json_graph.node_link_data(P)
+        example["path"] = path_data
         example["question_phrases"] = question_phrases
+        example["question_phrases_text"] = question_phrases_text 
         example["paras_phrases"] = paras_phrases
     #     example["all_sent_phrases_text"] = all_sent_phrases_text
-        example["common_phrases"] = common_phrases
+        example["common_phrases"] = list(common_phrases)
         example["question_only_phrase"] = question_only_phrase
         example["path_phrases"] = path_phrases
         example["extended_phrases"] = extended_phrases 
-        example["relevant_graph_nodes"] = RG.nodes.data()
+        
+        
+        # example["relevant_graph_nodes"] = list(RG.nodes) 
         # print("extended_phrases: ", extended_phrases)
 #         print("context: ", context)    
 #         print("\n\n") 
@@ -249,25 +263,44 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
 #         print("\n\n") 
         
  
-        raw_reduced_contexts = []     # sentences contain one of the phrases in the path 
+        # construct the reduced_context    
+        raw_reduced_contexts = []     # sentences contain one of the extended_phrases
         number_sentences = 0
         number_reduced_sentences = 0 
         kept_para_sent = []
         for para_id, (para_title, para_lines) in enumerate(raw_contexts): 
-            
             number_sentences += len(para_lines)
             reduced_para = []
             kept_sent = []
             for sent_id, sent in enumerate(para_lines):
     
                 for phrase in extended_phrases:
-                    # every other element is text, others are rank 
-                    if(phrase in list(flatten(paras_phrases[para_id][sent_id+1]))[::2]):  # paras_phrases[para_id][0] are phrases from the title
+                    # fuzzy macth for construct reduce_conext
+                    sentence_phrases = list(flatten(paras_phrases[para_id][sent_id+1]))[::2]  # paras_phrases[para_id][0] are phrases from the title, every other element is text, others are rank  
+                                     
+                    if(phrase in sentence_phrases):  # has a exact match, current sentence contains one of the extended_phrases
                         reduced_para.append(sent)
                         number_reduced_sentences += 1 
                         kept_sent.append(sent_id)
-                        break     # if current sentence contains one of the extended_phrases, this sentence is added to reduced sentence, and no need to continue checking whether it contains other phrases
-            
+                        break     # no need to continue checking whether current sentence contains other extended_phrases
+                    
+                    # check partial match
+                    if (utils.full_process(phrase) and sentence_phrases != []):    # only exectute when query is valid. To avoid WARNING:root:Applied processor reduces input query to empty string, all comparisons will have score 0.
+                        simi_phrase, similarity = process.extractOne(phrase, sentence_phrases, scorer=fuzz.token_sort_ratio)  
+                        if(similarity > 70): # current sentence contains at least one  phrase very similar to the extended_phrase
+                            reduced_para.append(sent)
+                            number_reduced_sentences += 1 
+                            kept_sent.append(sent_id)
+                            break 
+                        else:
+                            simi_phrase, similarity = process.extractOne(phrase, sentence_phrases, scorer=fuzz.partial_ratio)    # match 'woman' and 'businesswoman'
+                            if(similarity == 100):   # current sentence contains substring of extended_phrase
+                                reduced_para.append(sent)
+                                number_reduced_sentences += 1 
+                                kept_sent.append(sent_id)
+                                break 
+                            
+                            
             if(len(reduced_para) > 0):
                 raw_reduced_contexts.append([para_title, reduced_para])
                 kept_para_sent.append(kept_sent)
@@ -281,8 +314,7 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
         print("after reconstruct reduced context", end ='\t')
         print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))    
                     
-        assert number_reduced_sentences <= number_sentences                    
-        reduced_context_ratios.append(number_reduced_sentences / number_sentences)    
+        assert number_reduced_sentences <= number_sentences                     
         
      
         supporting_facts = []
@@ -307,10 +339,7 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
         
         # print("number_sentences: ", number_sentences)
         # print("number_reduced_sentences: ", number_reduced_sentences)
-
-#         now = datetime.now()
-#         current_time = now.strftime("%H:%M:%S")
-#         print("Time =", current_time) 
+ 
     # print("number of questions with at least 2 phrases shared by question and context: ", common_phrases_num_le2) 
     # print("number of questions with extended phrases from context besides question: ", extended) 
     # print("reduced context ratios: ", reduced_context_ratios)
