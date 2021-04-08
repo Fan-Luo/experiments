@@ -137,8 +137,8 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
             print("process paragraph ", i, end ='\t')
             print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
         
-            title = _normalize_text(para_context[0])          
-            sents = [_normalize_text(sent) for sent in para_context[1]]
+            title = para_context[0]         
+            sents = [sent for sent in para_context[1]]
             
             print("after normalize text", end ='\t')
             print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
@@ -153,6 +153,10 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
             num_sents_after_coref_resolved = len(sents_coref_resolved)
             # print("numbe of sents after coref: ", num_sents_after_coref_resolved)
             
+            # normalize: remove stop words and extract white space
+            sents_coref_resolved = [_normalize_text(sent_coref_resolved) for sent_coref_resolved in sents_coref_resolved]
+            sents = [_normalize_text(sent) for sent in sents]
+            title = _normalize_text(title)
             if(num_sents_before_coref_resolved == num_sents_after_coref_resolved):
                 sent_docs = list(nlp2.pipe([title] + sents_coref_resolved))       
             else:
@@ -164,7 +168,7 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
             
             para_phrases = []                                        
             for sent_doc in sent_docs:                                    # each sent in a para
-                sent_phrases = [(p.text, p.rank) for p in sent_doc._.phrases if(p.text != '')]  # phrases from each sentence 
+                sent_phrases = [(remove_punc(p.text.lower()), p.rank) for p in sent_doc._.phrases if(p.text != '')]  # phrases from each sentence 
                 para_phrases.append(sent_phrases)       
             paras_phrases.append(para_phrases)    
             
@@ -175,8 +179,9 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
         
         question = _normalize_text(example["question"])
         question_doc = nlp2(question)
-        question_phrases = [(p.text, p.rank) for p in question_doc._.phrases if(p.text != '')] 
-        question_phrases_text = [p[0] for p in question_phrases]
+        question_phrases = [(remove_punc(p.text.lower()), p.rank) for p in question_doc._.phrases if(p.text != '')] 
+        question_phrases_text = [p[0] for p in question_phrases] 
+
         # question_phrases_text = set(list(flatten([p.split() for p in question_phrases_text])) + question_phrases_text) # add phrase words
 
         print("after extracting phrases for the question", end ='\t')
@@ -209,17 +214,13 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
                 
             # check partial match
             if (utils.full_process(phrase) and question_phrases_text != []):    # only exectute when query is valid. To avoid WARNING:root:Applied processor reduces input query to empty string, all comparisons will have score 0.
-                simi_phrase, similarity = process.extractOne(phrase, question_phrases_text, scorer=fuzz.token_sort_ratio)  # most similar 
-                if(similarity > 70): 
-                    mapping[phrase] = simi_phrase   
-                    common_phrases.add(simi_phrase)
-                else:
-                    simi_phrase, similarity = process.extractOne(phrase, question_phrases_text, scorer=fuzz.partial_ratio)    # match 'woman' and 'businesswoman'
-                    if(similarity == 100):   # substring
-                        mapping[phrase] = simi_phrase   
-                        common_phrases.add(simi_phrase)
-                 
-                
+                inclusion_phrases = [simi_phrase for (simi_phrase, similarity) in process.extractBests(phrase, question_phrases_text, scorer=fuzz.partial_ratio) if similarity ==100]      # substring, match 'woman' and 'businesswoman'
+                if(inclusion_phrases!= []):
+                    simi_phrase, similarity = process.extractOne(phrase, inclusion_phrases, scorer=fuzz.ratio) # most similar   
+                    if(similarity >= 50):    
+                            mapping[phrase] = simi_phrase   
+                            common_phrases.add(simi_phrase)
+
         RG = nx.relabel_nodes(RG, mapping)      # match 'english government position' with 'government position'
 
         print("after graph construction", end ='\t')
@@ -273,33 +274,20 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
             reduced_para = []
             kept_sent = []
             for sent_id, sent in enumerate(para_lines):
+                sentence_phrases = list(flatten(paras_phrases[para_id][sent_id+1]))[::2]  # paras_phrases[para_id][0] are phrases from the title, every other element is text, others are rank  
+                if(any([sentence_phrase in mapping for sentence_phrase in sentence_phrases])): # at least one of sentence_phrase mapped to question phrase
+                    reduced_para.append(sent)
+                    number_reduced_sentences += 1 
+                    kept_sent.append(sent_id)
+                    continue
     
-                for phrase in extended_phrases:
-                    # fuzzy macth for construct reduce_conext
-                    sentence_phrases = list(flatten(paras_phrases[para_id][sent_id+1]))[::2]  # paras_phrases[para_id][0] are phrases from the title, every other element is text, others are rank  
-                                     
-                    if(phrase in sentence_phrases):  # has a exact match, current sentence contains one of the extended_phrases
+                for phrase in extended_phrases:                    
+                    if(phrase in sentence_phrases):  # current sentence has a exact match to extended_phrases 
                         reduced_para.append(sent)
                         number_reduced_sentences += 1 
                         kept_sent.append(sent_id)
                         break     # no need to continue checking whether current sentence contains other extended_phrases
-                    
-                    # check partial match
-                    if (utils.full_process(phrase) and sentence_phrases != []):    # only exectute when query is valid. To avoid WARNING:root:Applied processor reduces input query to empty string, all comparisons will have score 0.
-                        simi_phrase, similarity = process.extractOne(phrase, sentence_phrases, scorer=fuzz.token_sort_ratio)  
-                        if(similarity > 70): # current sentence contains at least one  phrase very similar to the extended_phrase
-                            reduced_para.append(sent)
-                            number_reduced_sentences += 1 
-                            kept_sent.append(sent_id)
-                            break 
-                        else:
-                            simi_phrase, similarity = process.extractOne(phrase, sentence_phrases, scorer=fuzz.partial_ratio)    # match 'woman' and 'businesswoman'
-                            if(similarity == 100):   # current sentence contains substring of extended_phrase
-                                reduced_para.append(sent)
-                                number_reduced_sentences += 1 
-                                kept_sent.append(sent_id)
-                                break 
-                            
+
                             
             if(len(reduced_para) > 0):
                 raw_reduced_contexts.append([para_title, reduced_para])
@@ -353,22 +341,31 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
 
     return  
 
+# revised for extractiing phrases, case matters for phrases extraction
 def _normalize_text(s):
 
-    def remove_articles(text):
-        return re.sub(r'\b(a|an|the)\b', ' ', text)
+#     def remove_articles(text):
+#         return re.sub(r'\b(a|an|the)\b', ' ', text)
 
     def white_space_fix(text):
         return ' '.join(text.split())
 
-    def remove_punc(text):
-        exclude = set(string.punctuation)
-        return ''.join(ch for ch in text if ch not in exclude)
+#     def remove_sentence_end(text):
+#         exclude = set(['.', '?'])
+#         return ''.join(ch for ch in text if ch not in exclude)
 
-    def lower(text):
-        return text.lower()
+    def remove_wh_words(text):
+        wh_words = set(["what", "when", 'where', "which", "who", "whom", "whose", "why", "how", "whether"])
+        return ' '.join(word for word in text.split() if word not in wh_words) 
+    
+    return white_space_fix(remove_wh_words(s))
 
-    return white_space_fix(remove_articles(remove_punc(lower(s))))
+def lower(text):
+    return text.lower()
+
+def remove_punc(text):
+    exclude = set(string.punctuation)
+    return ''.join(ch for ch in text if ch not in exclude)
  
 import json
 import argparse 
