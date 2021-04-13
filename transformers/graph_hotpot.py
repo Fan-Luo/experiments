@@ -126,37 +126,32 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
         print("_id: ", example["_id"], end ='\t')
         print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
         
+        question = _normalize_text(example["question"])
+        question_doc = nlp2(question)
+        question_phrases = [(remove_punc(p.text.lower()), p.rank) for p in question_doc._.phrases if(p.text != '')] 
+        question_phrases_text = [p[0] for p in question_phrases] 
+        # question_phrases_text = set(list(flatten([p.split() for p in question_phrases_text])) + question_phrases_text) # add phrase words
+
         raw_contexts = example["context"]
 #         if gold_paras_only: 
 #        raw_contexts = [lst for lst in raw_contexts if lst[0] in support_para]    
         paras_phrases = []                                                # phrases of all 10 paragraghs
         # contexts = []
- 
+             
         for i, para_context in enumerate(raw_contexts):                   # each para
         
             print("process paragraph ", i, end ='\t')
             print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
         
-            title = para_context[0]         
-            sents = [sent for sent in para_context[1]]
+            title = _normalize_text(para_context[0])    
+            sents = [ _normalize_text(sent) for sent in para_context[1]]
             
-            print("after normalize text", end ='\t')
-            print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
-            
-            # resolve coreference
-            num_sents_before_coref_resolved = len(sents)
-            # print("numbe of sents before coref: ", num_sents_before_coref_resolved)
-            sents_joint =  (' ' + SENT_MARKER_END +' ').join(sents) 
-            sents_doc = nlp1(sents_joint)
-            # print("resolved_sents: ", sents_doc._.coref_resolved) 
+            num_sents_before_coref_resolved = len(sents) 
+            sents_joint =  (' ' + SENT_MARKER_END +' ').join(sents)
+            sents_doc = nlp1(sents_joint) 
             sents_coref_resolved = sents_doc._.coref_resolved.split(SENT_MARKER_END)
-            num_sents_after_coref_resolved = len(sents_coref_resolved)
-            # print("numbe of sents after coref: ", num_sents_after_coref_resolved)
+            num_sents_after_coref_resolved = len(sents_coref_resolved) 
             
-            # normalize: remove stop words and extract white space
-            sents_coref_resolved = [_normalize_text(sent_coref_resolved) for sent_coref_resolved in sents_coref_resolved]
-            sents = [_normalize_text(sent) for sent in sents]
-            title = _normalize_text(title)
             if(num_sents_before_coref_resolved == num_sents_after_coref_resolved):
                 sent_docs = list(nlp2.pipe([title] + sents_coref_resolved))       
             else:
@@ -175,59 +170,21 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
             print("after extract phrases", end ='\t')
             print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
 
-        all_sent_phrases_text =  list(flatten(paras_phrases))[::2]        # every other element is text, others are rank. 
-        
-        question = _normalize_text(example["question"])
-        question_doc = nlp2(question)
-        question_phrases = [(remove_punc(p.text.lower()), p.rank) for p in question_doc._.phrases if(p.text != '')] 
-        question_phrases_text = [p[0] for p in question_phrases] 
-
-        # question_phrases_text = set(list(flatten([p.split() for p in question_phrases_text])) + question_phrases_text) # add phrase words
+        # all_sent_phrases_text =  list(flatten(paras_phrases))[::2]        # every other element is text, others are rank. 
+ 
 
         print("after extracting phrases for the question", end ='\t')
         print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
 
-        paras_phrases_graph = create_para_graph(paras_phrases)
-        Subgraphs = [paras_phrases_graph.subgraph(c).copy() for c in nx.connected_components(paras_phrases_graph)]
-        
-        RG = nx.Graph()    # relevant components  
-        represnetive_nodes = []  # more likely to include the represnetive_nodes in the final path       
-        for S in Subgraphs:
-            for phrase in question_phrases_text:
-                if S.has_node(phrase):
-                    RG = nx.compose(RG, S)  # joint the relevant components
-                    represnetive_node = sorted(S.nodes.data('score'), key=lambda x: x[1], reverse=True)[0]  # node with highest score
-                    represnetive_nodes.append(represnetive_node) 
-                    break
-        
-        for node1, node2 in itertools.combinations([phrase[0] for phrase in represnetive_nodes], 2):  
-            RG.add_edge(node1, node2, src = 'components')
-            
-            
-        # map pharse similar to question phrases to question phrase, then fnd common phrases
-        common_phrases = set()
-        mapping = {}
-        for phrase in RG.nodes:
-            if(phrase in question_phrases_text):    # has a exact match
-                common_phrases.add(phrase)
-                continue
-                
-            # check partial match
-            if (utils.full_process(phrase) and question_phrases_text != []):    # only exectute when query is valid. To avoid WARNING:root:Applied processor reduces input query to empty string, all comparisons will have score 0.
-                inclusion_phrases = [simi_phrase for (simi_phrase, similarity) in process.extractBests(phrase, question_phrases_text, scorer=fuzz.partial_ratio) if similarity ==100]      # substring, match 'woman' and 'businesswoman'
-                if(inclusion_phrases!= []):
-                    simi_phrase, similarity = process.extractOne(phrase, inclusion_phrases, scorer=fuzz.ratio) # most similar   
-                    if(similarity >= 50):    
-                            mapping[phrase] = simi_phrase   
-                            common_phrases.add(simi_phrase)
-
-        RG = nx.relabel_nodes(RG, mapping)      # match 'english government position' with 'government position'
+        RG = create_relevant_graph(paras_phrases, question_phrases_text)
+        RG, common_phrases, mapping = find_common_mapping(RG, question_phrases_text)# mapping matchs paras_phrases with question_phrases
+        RG, dup_sets = dedup_nodes_in_graph(RG, question_phrases_text)              # dedup paras_phrases in RG for finding meanningful path
 
         print("after graph construction", end ='\t')
         print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
  
-        question_only_phrase = list(set(question_phrases_text).difference(common_phrases))
-        if(len(common_phrases) > 1):
+        question_only_phrase = list(set(question_phrases_text).difference(common_phrases)) 
+        if(len(common_phrases) > 1): 
             path_phrases = list(approx.steinertree.steiner_tree(RG, common_phrases).nodes)  # to find the shortest path cover all common_phrases  
             extended_phrases = path_phrases + question_only_phrase  
         else: #  0 or 1 common phrases
@@ -237,7 +194,23 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
         print("after path finding", end ='\t')
         print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
 
-        P = RG.subgraph(extended_phrases)        
+        # expand to include merged nodes, that is, also include phrases that from the same dup_set 
+        extended_phrases_merged = set()
+        for phrase in extended_phrases:
+            idx_phrase = [idx for idx, dup_set in enumerate(dup_sets) if(phrase in dup_set)]   # the set where phrase in
+            if(len(idx_phrase) > 0):
+                extended_phrases_merged = extended_phrases_merged | dup_sets[idx_phrase[0]]
+                extended_phrases_merged.remove(phrase)
+        extended_phrases.extend(list(extended_phrases_merged))
+        introduced_phrases = list(set(extended_phrases) - set(question_phrases_text))
+
+        raw_reduced_contexts, kept_para_sent = construct_reduced_context(raw_contexts, paras_phrases, extended_phrases, mapping) 
+        reduced_supporting_facts, reduced_supporting_facts_in_original_id = construct_reduced_supporting_facts(example["supporting_facts"], raw_reduced_contexts, kept_para_sent) 
+        print("after reconstruct reduced context and reduced sp", end ='\t')
+        print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))    
+
+
+        P = RG.subgraph(path_phrases)        
         # print(P.edges(data=True))
         path_data = json_graph.node_link_data(P)
         example["path"] = path_data
@@ -248,90 +221,14 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
         example["common_phrases"] = list(common_phrases)
         example["question_only_phrase"] = question_only_phrase
         example["path_phrases"] = path_phrases
-        example["extended_phrases"] = extended_phrases 
-        
-        
-        # example["relevant_graph_nodes"] = list(RG.nodes) 
-        # print("extended_phrases: ", extended_phrases)
-#         print("context: ", context)    
-#         print("\n\n") 
-#         print("question_phrases: ", question_phrases)    
-        # print("paras_phrases")
-        # for paras_phrase in paras_phrases:
-        #     print(paras_phrase)
-        #     print("\n") 
-#         print("all_sent_phrases_text: ", all_sent_phrases_text) 
-#         print("\n\n") 
-        
- 
-        # construct the reduced_context    
-        raw_reduced_contexts = []     # sentences contain one of the extended_phrases
-        number_sentences = 0
-        number_reduced_sentences = 0 
-        kept_para_sent = []
-        for para_id, (para_title, para_lines) in enumerate(raw_contexts): 
-            number_sentences += len(para_lines)
-            reduced_para = []
-            kept_sent = []
-            for sent_id, sent in enumerate(para_lines):
-                sentence_phrases = list(flatten(paras_phrases[para_id][sent_id+1]))[::2]  # paras_phrases[para_id][0] are phrases from the title, every other element is text, others are rank  
-                if(any([sentence_phrase in mapping for sentence_phrase in sentence_phrases])): # at least one of sentence_phrase mapped to question phrase
-                    reduced_para.append(sent)
-                    number_reduced_sentences += 1 
-                    kept_sent.append(sent_id)
-                    continue
-    
-                for phrase in extended_phrases:                    
-                    if(phrase in sentence_phrases):  # current sentence has a exact match to extended_phrases 
-                        reduced_para.append(sent)
-                        number_reduced_sentences += 1 
-                        kept_sent.append(sent_id)
-                        break     # no need to continue checking whether current sentence contains other extended_phrases
-
-                            
-            if(len(reduced_para) > 0):
-                raw_reduced_contexts.append([para_title, reduced_para])
-                kept_para_sent.append(kept_sent)
-            else:
-                for phrase in extended_phrases:
-                    if(phrase in list(flatten(paras_phrases[para_id][0]))[::2]):   # only tilte contains one of the extended_phrases
-                        raw_reduced_contexts.append([para_title, []])
-                        kept_para_sent.append(kept_sent)
-                        break
-                    
-        print("after reconstruct reduced context", end ='\t')
-        print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))    
-                    
-        assert number_reduced_sentences <= number_sentences                     
-        
-     
-        supporting_facts = []
-        support_para = set(
-            para_title for para_title, _ in example["supporting_facts"]
-        )
-        sp_set = set(list(map(tuple, example['supporting_facts'])))                       # a list of (title, sent_id in orignal context) 
-        for i, para_reduced_context in enumerate(raw_reduced_contexts):                   # each para
-            if(para_reduced_context[0] in support_para):
-                for sent_id, orig_sent_id in enumerate(kept_para_sent[i]):
-                    if( (para_reduced_context[0], orig_sent_id) in sp_set ):
-                        supporting_facts.append([para_reduced_context[0], sent_id])
-
-        print("after reconstruct reduced sp", end ='\t')
-        print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))    
-
+        example["extended_phrases"] = extended_phrases
+        example["introduced_phrases"] = introduced_phrases
         example['context'] = raw_reduced_contexts
-        example['supporting_facts'] = supporting_facts
+        example['supporting_facts'] = reduced_supporting_facts
+        example['reduced_supporting_facts_in_original_id'] = reduced_supporting_facts_in_original_id
         example['kept_para_sent'] = kept_para_sent
         data.append(example)         
-        
-        
-        # print("number_sentences: ", number_sentences)
-        # print("number_reduced_sentences: ", number_reduced_sentences)
- 
-    # print("number of questions with at least 2 phrases shared by question and context: ", common_phrases_num_le2) 
-    # print("number of questions with extended phrases from context besides question: ", extended) 
-    # print("reduced context ratios: ", reduced_context_ratios)
-    # print("average ratio of reduced context: ", sum(reduced_context_ratios)/len(reduced_context_ratios))
+
     
     with open(outfile, 'w') as out_file:
         json.dump(data, out_file)
@@ -340,6 +237,157 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
     print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))            
 
     return  
+
+def create_relevant_graph(paras_phrases, question_phrases_text):
+    G = create_para_graph(paras_phrases)
+    Subgraphs = [G.subgraph(c).copy() for c in nx.connected_components(G)]
+    RG = nx.Graph()    # relevant components  
+    represnetive_nodes = []  # more likely to include the represnetive_nodes in the final path       
+    for S in Subgraphs:
+        for phrase in question_phrases_text:
+            if S.has_node(phrase):
+                RG = nx.compose(RG, S)  # joint the relevant components
+                represnetive_node = sorted(S.nodes.data('score'), key=lambda x: x[1], reverse=True)[0]  # node with highest score
+                represnetive_nodes.append(represnetive_node) 
+                break
+    
+    for node1, node2 in itertools.combinations([phrase[0] for phrase in represnetive_nodes], 2):  
+        RG.add_edge(node1, node2, source = 'components')
+
+    return RG
+
+
+def find_common_mapping(G, question_phrases_text):
+    # fuzzy macth for common phrases: map pharse similar to question phrases to question phrase, then find common phrases
+    common_phrases = set()
+    mapping = {}
+    for phrase in G.nodes:
+        if(phrase in question_phrases_text):    # has a exact match
+            common_phrases.add(phrase)
+            continue
+            
+        # check partial match
+        inclusion_similar_phrase = inclusion_best_match(phrase, question_phrases_text)
+        if(inclusion_similar_phrase): 
+            mapping[phrase] = inclusion_similar_phrase   
+            common_phrases.add(inclusion_similar_phrase)
+    
+    G = nx.relabel_nodes(G, mapping)      # match 'english government position' with 'government position'
+    
+    return G, common_phrases, mapping
+
+def inclusion_best_match(query, choices):
+    if (utils.full_process(query) and choices != []):  # only exectute when query is valid. To avoid WARNING:root:Applied processor reduces input query to empty string, all comparisons will have score 0.
+        inclusion_phrases = [simi_phrase for (simi_phrase, similarity) in process.extractBests(query, choices, scorer=fuzz.token_set_ratio) if similarity ==100]  # match '1977 film' and '1977', but will not match substring 'woman' and 'businesswoman', avid nosiy such as 'music' and 'us'
+        if(inclusion_phrases!= []):
+            simi_phrase, similarity = process.extractOne(query, inclusion_phrases, scorer=fuzz.ratio) # most similar   
+            if(similarity >= 50):    
+                return simi_phrase
+            else:
+                return None
+    else:
+        return None
+        
+def dedup_nodes_in_graph(G, grounded):
+    def find_inclusion_duplicates(contains_dupes): 
+        dup_sets = []
+        for phrase in contains_dupes:
+            rest_phrases = [p for p in contains_dupes if p != phrase] 
+            inclusion_similar_phrase = inclusion_best_match(phrase, rest_phrases)
+            if(inclusion_similar_phrase): 
+                idx_phrase = [idx for idx, set in enumerate(dup_sets) if(phrase in set)]   # the set where phrase already in
+                idx_inclusion_similar_phrase = [idx for idx, set in enumerate(dup_sets) if(inclusion_similar_phrase in set)]
+                if(len(idx_phrase) > 0 and len(idx_inclusion_similar_phrase) == 0):
+                    dup_sets[idx_phrase[0]].add(inclusion_similar_phrase)
+                elif(len(idx_inclusion_similar_phrase) > 0 and len(idx_phrase) == 0):
+                    dup_sets[idx_inclusion_similar_phrase[0]].add(phrase)
+                elif(len(idx_inclusion_similar_phrase) > 0 and len(idx_phrase) > 0):
+                    dup_sets[idx_phrase[0]] = dup_sets[idx_phrase[0]] | dup_sets[idx_inclusion_similar_phrase[0]]
+                    dup_sets.pop(idx_inclusion_similar_phrase[0])
+                elif(len(idx_inclusion_similar_phrase) == 0 and len(idx_phrase) == 0):
+                    dup_sets.append(set([phrase, inclusion_similar_phrase]))
+                else:
+                    print("len(idx_inclusion_similar_phrase), len(idx_phrase)")
+                    print(len(idx_inclusion_similar_phrase), len(idx_phrase) )
+ 
+        return dup_sets
+
+    def merge_dup_nodes(G, dup_sets, grounded):
+
+        for node_sets in dup_sets:     
+            assert len(node_sets) >= 2
+            # for each set, decide which one to be merged to
+            # longest phrase that is same as a question phrase 
+            merged_node = sorted([p for p in node_sets if p in grounded], key=lambda x: len(x), reverse=True)
+            if(len(merged_node) == 0):   
+                merged_node = sorted(node_sets, key=lambda x: len(x), reverse=True) # longest phrase
+                        
+            # merged_node[0] is the node to be merged to for current node_set
+            for n in node_sets:
+                if(n != merged_node[0]):
+                    G = nx.contracted_nodes(G, merged_node[0], n)   # merge node
+                        
+        return G
+    
+    dup_sets = find_inclusion_duplicates(G.nodes)
+    return merge_dup_nodes(G, dup_sets, grounded), dup_sets
+
+def construct_reduced_context(raw_contexts, paras_phrases, extended_phrases, mapping):    
+    raw_reduced_contexts = []     # sentences contain one of the extended_phrases
+    number_sentences = 0
+    number_reduced_sentences = 0 
+    kept_para_sent = []
+    for para_id, (para_title, para_lines) in enumerate(raw_contexts):  
+        number_sentences += len(para_lines)
+        reduced_para = []
+        kept_sent = []
+        for sent_id, sent in enumerate(para_lines):
+            sentence_phrases = list(flatten(paras_phrases[para_id][sent_id+1]))[::2]  # paras_phrases[para_id][0] are phrases from the title, every other element is text, others are rank  
+            if(any([sentence_phrase in mapping for sentence_phrase in sentence_phrases])): # at least one of sentence_phrase mapped to question phrase
+                reduced_para.append(sent)
+                number_reduced_sentences += 1 
+                kept_sent.append(sent_id)
+                continue
+
+            for phrase in extended_phrases:                    
+                if(phrase in sentence_phrases):  # current sentence has a exact match to extended_phrases 
+                    reduced_para.append(sent)
+                    number_reduced_sentences += 1 
+                    kept_sent.append(sent_id)
+                    break     # no need to continue checking whether current sentence contains other extended_phrases
+
+        if(len(reduced_para) > 0):
+            raw_reduced_contexts.append([para_title, reduced_para])
+            kept_para_sent.append(kept_sent)
+        else:
+            for phrase in extended_phrases:
+                if(phrase in list(flatten(paras_phrases[para_id][0]))[::2]):   # only tilte contains one of the extended_phrases
+                    raw_reduced_contexts.append([para_title, []])
+                    kept_para_sent.append(kept_sent)
+                    break
+                      
+    assert number_reduced_sentences <= number_sentences    
+
+    return raw_reduced_contexts, kept_para_sent
+
+def construct_reduced_supporting_facts(supporting_facts, reduced_contexts, kept_para_sent):
+    
+    reduced_supporting_facts = []
+    reduced_supporting_facts_in_original_id = []
+    support_para = set(
+        para_title for para_title, _ in supporting_facts
+    )
+    sp_set = set(list(map(tuple, supporting_facts)))                              # a list of (title, sent_id in orignal context) 
+
+    for i, para_reduced_context in enumerate(reduced_contexts):                   # each para
+        if(para_reduced_context[0] in support_para):
+            for sent_id, orig_sent_id in enumerate(kept_para_sent[i]):
+                if( (para_reduced_context[0], orig_sent_id) in sp_set ):
+                    reduced_supporting_facts.append([para_reduced_context[0], sent_id])
+                    reduced_supporting_facts_in_original_id.append([para_reduced_context[0], orig_sent_id])
+                    
+    return reduced_supporting_facts, reduced_supporting_facts_in_original_id
+
 
 # revised for extractiing phrases, case matters for phrases extraction
 def _normalize_text(s):
@@ -350,15 +398,18 @@ def _normalize_text(s):
     def white_space_fix(text):
         return ' '.join(text.split())
 
-#     def remove_sentence_end(text):
-#         exclude = set(['.', '?'])
-#         return ''.join(ch for ch in text if ch not in exclude)
+    def remove_sentence_end(text):
+        exclude = set(['.', '?'])
+        return ''.join(ch for ch in text if ch not in exclude)
 
+#     def remove_stop_words(text):
+#         all_stopwords = set(nlp.Defaults.stop_words)
+#         return ' '.join(word for word in text.split() if word not in all_stopwords) 
     def remove_wh_words(text):
         wh_words = set(["what", "when", 'where', "which", "who", "whom", "whose", "why", "how", "whether"])
         return ' '.join(word for word in text.split() if word not in wh_words) 
     
-    return white_space_fix(remove_wh_words(s))
+    return white_space_fix(remove_wh_words(remove_sentence_end(s)))
 
 def lower(text):
     return text.lower()
