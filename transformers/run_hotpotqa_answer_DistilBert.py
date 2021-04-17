@@ -10,6 +10,8 @@
 
 
 # helper functions to convert hotpotqa to squard format modified from  https://github.com/chiayewken/bert-qa/blob/master/run_hotpot.py
+import ctypes
+libgcc_s = ctypes.CDLL('libgcc_s.so.1')
 
 # import tqdm 
 from datetime import datetime 
@@ -315,8 +317,7 @@ class hotpotqaDataset(Dataset):
  
                 # inputs to the model
                 input_ids_list = []
-                input_mask_list = []
-                segment_ids_list = []
+                input_mask_list = [] 
                 start_positions_list = []
                 end_positions_list = []
                 q_type_list = []
@@ -325,29 +326,14 @@ class hotpotqaDataset(Dataset):
                 
                 inputs = self.tokenizer(question_text, context, return_tensors='pt', truncation=True, max_length=512)
                 input_ids = inputs['input_ids'][0].tolist()
+                input_mask = [1] * len(input_ids)
                 
                 sep_token_id = self.tokenizer.convert_tokens_to_ids(self.tokenizer.sep_token)
                 context_offset = input_ids.index(sep_token_id)+1
                 context_ids = input_ids[context_offset:]
-#                 for slice_start in range(0, len(all_doc_tokens), max_tokens_per_doc_slice - self.doc_stride):    # execute once by default
-                
-#                     # print("slice_start in range") 
-#                     slice_end = min(slice_start + max_tokens_per_doc_slice, len(all_doc_tokens))
-
-#                     doc_slice_tokens = all_doc_tokens[slice_start:slice_end]
-#                     tokens = [self.tokenizer.cls_token] + [QUESTION_START] + query_tokens + [QUESTION_END] + doc_slice_tokens + [PAR] + self.tokenizer.tokenize("yes") + self.tokenizer.tokenize("no") + [self.tokenizer.eos_token]   
-#                     segment_ids = [0] * (len(query_tokens) + 3) + [1] * (len(doc_slice_tokens) + 4) 
-# #                     if(len(segment_ids) != len(tokens)):
-# #                         print("len(segment_ids): ", len(segment_ids))
-# #                         print("len(tokens): ", len(tokens))
-#                     assert len(segment_ids) == len(tokens)
-
-                    # input_ids = self.tokenizer.convert_tokens_to_ids(tokens)   
-                    # input_mask = [1] * len(input_ids)
-
-                    # doc_offset = len(query_tokens) + 3 - slice_start  # where context starts
+ 
                     
-                    # ===== answer positions tensors  ============
+                # ===== answer positions tensors  ============
                 start_positions = []
                 end_positions = []
 
@@ -407,34 +393,14 @@ class hotpotqaDataset(Dataset):
                     found_start_positions.add(start_position)
                     found_end_positions.add(end_position)
                 
-                                     
-                # if self.doc_stride >= 0:  # no need to pad if document is not strided
-                # Zero-pad up to the sequence length.
-                padding_len = self.max_seq_len - len(input_ids)
-                input_ids.extend([self.tokenizer.pad_token_id] * padding_len) 
-                input_mask = [1] * len(input_ids)
-                segment_ids = [0]  * len(input_ids)
-                
-                print("self.doc_stride >= 0")
-                if(len(input_ids) != self.max_seq_len):
-                    print("len(input_ids): ", len(input_ids))
-                if(len(input_mask) != self.max_seq_len):
-                    print("len(input_mask): ", len(input_mask))
-                if(len(segment_ids) != self.max_seq_len):    
-                    print("len(segment_ids): ", len(segment_ids))
-                
-                assert len(input_ids) == self.max_seq_len
-                assert len(input_mask) == self.max_seq_len
-                assert len(segment_ids) == self.max_seq_len  
-                    
+ 
                 input_ids_list.append(input_ids)
-                input_mask_list.append(input_mask)
-                segment_ids_list.append(segment_ids)
+                input_mask_list.append(input_mask) 
                 start_positions_list.append(start_positions)
                 end_positions_list.append(end_positions)
                 q_type_list.append(q_type)
                     
-                tensors_list.append((torch.tensor(input_ids_list), torch.tensor(input_mask_list), torch.tensor(segment_ids_list),
+                tensors_list.append((torch.tensor(input_ids_list), torch.tensor(input_mask_list),
                                      torch.tensor(start_positions_list), torch.tensor(end_positions_list), torch.tensor(q_type_list),
                                     #   torch.tensor([sp_sent_list]),  torch.tensor([sp_para_list]),
                                      qa['id'], answer))     
@@ -747,7 +713,7 @@ class hotpotqa(pl.LightningModule):
 
 
     def training_step(self, batch, batch_nb):
-        input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, qid, answer = batch  
+        input_ids, input_mask, subword_starts, subword_ends, q_type, qid, answer = batch  
         output = self.forward(input_ids, subword_starts, subword_ends, q_type)
         answer_loss, type_loss = output[:2] 
     
@@ -805,7 +771,7 @@ class hotpotqa(pl.LightningModule):
 
    # When the validation_step is called, the model has been put in eval mode and PyTorch gradients have been disabled. At the end of validation, model goes back to training mode and gradients are enabled.
     def validation_step(self, batch, batch_nb):
-        input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, qid, answer = batch 
+        input_ids, input_mask, subword_starts, subword_ends, q_type, qid, answer = batch 
         answer_loss, type_loss, start_logits, end_logits, type_logits = self.forward(input_ids, subword_starts, subword_ends, q_type)
     #     print("start_logits: ", start_logits)
     #     print("end_logits: ", end_logits)
@@ -1112,8 +1078,8 @@ class hotpotqa(pl.LightningModule):
 
 
     def test_step(self, batch, batch_nb):
-        # input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para, qid, answer = batch
-        input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, qid, answer = batch
+        # input_ids, input_mask, subword_starts, subword_ends, q_type, sp_sent, sp_para, qid, answer = batch
+        input_ids, input_mask, subword_starts, subword_ends, q_type, qid, answer = batch
 
         print("test_step of qid: ", qid, end="\t") 
         answer_loss, type_loss, start_logits, end_logits, type_logits = self.forward(input_ids, subword_starts, subword_ends, q_type)
