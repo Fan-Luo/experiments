@@ -775,7 +775,12 @@ class hotpotqa(pl.LightningModule):
         answer_loss, type_loss, start_logits, end_logits, type_logits = self.forward(input_ids, subword_starts, subword_ends, q_type)
     #     print("start_logits: ", start_logits)
     #     print("end_logits: ", end_logits)
-        answers_pred = self.decode(input_ids, start_logits, end_logits, type_logits)
+        if(q_type.item() != -1 ):
+        # answers_pred, sp_sent_pred, sp_para_pred = self.decode(input_ids, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output)
+            answers_pred = self.decode(input_ids, start_logits, end_logits, type_logits)
+        else:
+            answers_pred  = [{'text': '', 'score': -1000000, 'start_logit': -1000000, 'end_logit': -1000000, 'p_type_score': 1}]
+
         loss = answer_loss + 5*type_loss 
     
         if(len(answers_pred) != 1):
@@ -1108,7 +1113,7 @@ class hotpotqa(pl.LightningModule):
         recall = torch.tensor(recall).type_as(loss)
         em = torch.tensor(em).type_as(loss)
         
-        print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer, "\tstart_logits:\t", start_logits.cpu(), "\tend_logits:\t", end_logits.cpu(), "\ttype_logits:\t", type_logits.cpu())
+        print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer) #, "\tstart_logits:\t", start_logits.cpu(), "\tend_logits:\t", end_logits.cpu(), "\ttype_logits:\t", type_logits.cpu())
         
         self.logger.log_metrics({'answer_loss': answer_loss, 'type_loss': type_loss, 
                                     'answer_score': pre_answer_score, 'start_logit': start_logit, 'end_logit': end_logit,  

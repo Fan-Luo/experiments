@@ -10,6 +10,8 @@
 
 
 # helper functions to convert hotpotqa to squard format modified from  https://github.com/chiayewken/bert-qa/blob/master/run_hotpot.py
+import ctypes
+libgcc_s = ctypes.CDLL('libgcc_s.so.1')
 
 # import tqdm 
 from datetime import datetime 
@@ -848,8 +850,11 @@ class hotpotqa(pl.LightningModule):
 
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr)
 
-        scheduler = LambdaLR(optimizer, lr_lambda, last_epoch=-1)
-        return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
+        # scheduler = LambdaLR(optimizer, lr_lambda, last_epoch=-1)
+        # return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
+        self.scheduler = LambdaLR(optimizer, lr_lambda, last_epoch=-1)  # scheduler is not saved in the checkpoint, but global_step is, which is enough to restart
+        self.scheduler.step(self.global_step) 
+        return optimizer
      
 # ##### **training_step**
 
@@ -952,9 +957,12 @@ class hotpotqa(pl.LightningModule):
         # answer_loss, type_loss, sp_para_loss, sp_sent_loss, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output = output 
         loss = answer_loss + 5*type_loss #+ 10*sp_para_loss + 10*sp_sent_loss
  
+        if(q_type.item() != -1 ):
         # answers_pred, sp_sent_pred, sp_para_pred = self.decode(input_ids, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output)
-        answers_pred  = self.decode(input_ids, start_logits, end_logits, type_logits)
- 
+            answers_pred  = self.decode(input_ids, start_logits, end_logits, type_logits)
+        else:
+            answers_pred  = [{'text': '', 'score': -1000000, 'start_logit': -1000000, 'end_logit': -1000000, 'p_type_score': 1}]
+
  
         if(len(answers_pred) != 1):
             print("len(answers_pred) != 1")
@@ -1324,7 +1332,7 @@ class hotpotqa(pl.LightningModule):
         recall = torch.tensor(recall).type_as(loss)
         em = torch.tensor(em).type_as(loss)
         
-        print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer, "\tstart_logits:\t", start_logits.cpu(), "\tend_logits:\t", end_logits.cpu(), "\ttype_logits:\t", type_logits.cpu())
+        print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer) #, "\tstart_logits:\t", start_logits.cpu(), "\tend_logits:\t", end_logits.cpu(), "\ttype_logits:\t", type_logits.cpu())
         
         self.logger.log_metrics({'answer_loss': answer_loss, 'type_loss': type_loss, 
                                     'answer_score': pre_answer_score, 'start_logit': start_logit, 'end_logit': end_logit,  
