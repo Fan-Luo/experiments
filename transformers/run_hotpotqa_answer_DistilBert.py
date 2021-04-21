@@ -775,11 +775,8 @@ class hotpotqa(pl.LightningModule):
         answer_loss, type_loss, start_logits, end_logits, type_logits = self.forward(input_ids, subword_starts, subword_ends, q_type)
     #     print("start_logits: ", start_logits)
     #     print("end_logits: ", end_logits)
-        if(q_type.item() != -1 ):
-        # answers_pred, sp_sent_pred, sp_para_pred = self.decode(input_ids, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output)
-            answers_pred = self.decode(input_ids, start_logits, end_logits, type_logits)
-        else:
-            answers_pred  = [{'text': '', 'score': -1000000, 'start_logit': -1000000, 'end_logit': -1000000, 'p_type_score': 1}]
+        # print("qid: ", qid, "q_type: ", q_type)
+        answers_pred = self.decode(input_ids, start_logits, end_logits, type_logits) 
 
         loss = answer_loss + 5*type_loss 
     
@@ -824,9 +821,9 @@ class hotpotqa(pl.LightningModule):
         end_logits = end_logits.squeeze()
     #     print("start_logits: ", start_logits)
     #     print("end_logits: ", end_logits)
-        start_logits_indices = start_logits.topk(k=self.args.n_best_size, dim=-1).indices
-    #     print("start_logits_indices: ", start_logits_indices)
-        end_logits_indices = end_logits.topk(k=self.args.n_best_size, dim=-1).indices 
+        
+        start_logits_indices = start_logits.topk(k=min(self.args.n_best_size, start_logits.size(0)), dim=-1).indices 
+        end_logits_indices = end_logits.topk(k=min(self.args.n_best_size, end_logits.size(0)), dim=-1).indices 
         if(len(start_logits_indices.size()) > 1):
             print("len(start_logits_indices.size()): ", len(start_logits_indices.size()))
         assert("len(start_logits_indices.size()) > 1")

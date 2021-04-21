@@ -826,9 +826,8 @@ class hotpotqa(pl.LightningModule):
         end_logits = end_logits.squeeze()
     #     print("start_logits: ", start_logits)
     #     print("end_logits: ", end_logits)
-        start_logits_indices = start_logits.topk(k=self.args.n_best_size, dim=-1).indices
-    #     print("start_logits_indices: ", start_logits_indices)
-        end_logits_indices = end_logits.topk(k=self.args.n_best_size, dim=-1).indices 
+        start_logits_indices = start_logits.topk(k=min(self.args.n_best_size, start_logits.size(0)), dim=-1).indices 
+        end_logits_indices = end_logits.topk(k=min(self.args.n_best_size, end_logits.size(0)), dim=-1).indices 
         if(len(start_logits_indices.size()) > 1):
             print("len(start_logits_indices.size()): ", len(start_logits_indices.size()))
         assert("len(start_logits_indices.size()) > 1")

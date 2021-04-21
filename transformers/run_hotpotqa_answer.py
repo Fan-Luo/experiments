@@ -850,11 +850,9 @@ class hotpotqa(pl.LightningModule):
 
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args.lr)
 
-        # scheduler = LambdaLR(optimizer, lr_lambda, last_epoch=-1)
-        # return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
-        self.scheduler = LambdaLR(optimizer, lr_lambda, last_epoch=-1)  # scheduler is not saved in the checkpoint, but global_step is, which is enough to restart
-        self.scheduler.step(self.global_step) 
-        return optimizer
+        scheduler = LambdaLR(optimizer, lr_lambda, last_epoch=-1)
+        return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
+     
      
 # ##### **training_step**
 
@@ -955,14 +953,8 @@ class hotpotqa(pl.LightningModule):
         output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type) #, sp_sent, sp_para)
         answer_loss, type_loss, start_logits, end_logits, type_logits = output 
         # answer_loss, type_loss, sp_para_loss, sp_sent_loss, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output = output 
+        answers_pred = self.decode(input_ids, start_logits, end_logits, type_logits) 
         loss = answer_loss + 5*type_loss #+ 10*sp_para_loss + 10*sp_sent_loss
- 
-        if(q_type.item() != -1 ):
-        # answers_pred, sp_sent_pred, sp_para_pred = self.decode(input_ids, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output)
-            answers_pred  = self.decode(input_ids, start_logits, end_logits, type_logits)
-        else:
-            answers_pred  = [{'text': '', 'score': -1000000, 'start_logit': -1000000, 'end_logit': -1000000, 'p_type_score': 1}]
-
  
         if(len(answers_pred) != 1):
             print("len(answers_pred) != 1")
@@ -1036,9 +1028,8 @@ class hotpotqa(pl.LightningModule):
         end_logits = end_logits.squeeze()
     #     print("start_logits: ", start_logits)
     #     print("end_logits: ", end_logits)
-        start_logits_indices = start_logits.topk(k=self.args.n_best_size, dim=-1).indices
-    #     print("start_logits_indices: ", start_logits_indices)
-        end_logits_indices = end_logits.topk(k=self.args.n_best_size, dim=-1).indices 
+        start_logits_indices = start_logits.topk(k=min(self.args.n_best_size, start_logits.size(0)), dim=-1).indices 
+        end_logits_indices = end_logits.topk(k=min(self.args.n_best_size, end_logits.size(0)), dim=-1).indices 
         if(len(start_logits_indices.size()) > 1):
             print("len(start_logits_indices.size()): ", len(start_logits_indices.size()))
             assert("len(start_logits_indices.size()) > 1")
