@@ -1375,8 +1375,7 @@ class hotpotqa(pl.LightningModule):
             em_scores = self.sync_list_across_gpus(em_scores, avg_loss.device, torch.float)
             prec_scores = self.sync_list_across_gpus(prec_scores, avg_loss.device, torch.float)
             recall_scores = self.sync_list_across_gpus(recall_scores, avg_loss.device, torch.float)
-    #         int_qids = self.sync_list_across_gpus(int_qids, avg_loss.device, torch.int)
-            answer_scores = self.sync_list_across_gpus(answer_scores, avg_loss.device, torch.float)
+    #         int_qids = self.sync_list_across_gpus(int_qids, avg_loss.device, torch.int) 
            
             
         print(f'after sync --> sizes: {len(answer_scores)}')

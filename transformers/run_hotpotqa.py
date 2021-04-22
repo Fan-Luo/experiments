@@ -10,7 +10,8 @@
 
 
 # helper functions to convert hotpotqa to squard format modified from  https://github.com/chiayewken/bert-qa/blob/master/run_hotpot.py
-
+import ctypes	
+libgcc_s = ctypes.CDLL('libgcc_s.so.1')
 import tqdm 
 from datetime import datetime 
 import pytz 
@@ -88,21 +89,32 @@ def convert_hotpot_to_squad_format(json_dict, gold_paras_only=False):
             for sent_id, sent in enumerate(para_lines):
                 is_sup_fact.append( (para_title, sent_id) in sp_set )    
         
-        for lst in raw_contexts:
-            lst[0] = _normalize_text(lst[0])
-            lst[1] = [_normalize_text(sent) for sent in lst[1]]
-        
-        contexts = [TITLE_START + ' ' + lst[0]  + ' ' + TITLE_END + ' ' + (' ' + SENT_MARKER_END +' ').join(lst[1]) + ' ' + SENT_MARKER_END for lst in raw_contexts]    
-        # extra space is fine, which would be ignored latter. most sentences has already have heading space, there are several no heading space; call the _normalize_text() which is same as the one used during evaluation
-   
-        context = " ".join(contexts)  
+        contexts = []	
+        for para_id, para in enumerate(raw_contexts):	
+            title = _normalize_text(para[0])	
+            sents = [_normalize_text(sent) for sent in para[1]]	
+        	
+            if("kept_para_sent" in example):    # reduceded context	
+                sent_joint = ''	
+                for sent_id, sent in enumerate(sents):	
+                    if(sent_id > 0 and example["kept_para_sent"][para_id][sent_id] - example["kept_para_sent"][para_id][sent_id-1] > 1):	
+                        sent_joint += (' </s> ' + sent + ' ' + SENT_MARKER_END )   # </s> indicates at least one sentence is removed	
+                    else: 	
+                        sent_joint += (sent + ' ' + SENT_MARKER_END ) 	
+            else:	
+                sent_joint =  (' ' + SENT_MARKER_END +' ').join(sents) + ' ' + SENT_MARKER_END    	
+            	
+            contexts.append(TITLE_START + ' ' + title + ' ' + TITLE_END + ' ' +  sent_joint)	
+        	
+        # contexts = [TITLE_START + ' ' + lst[0]  + ' ' + TITLE_END + ' ' + (' ' + SENT_MARKER_END +' ').join(lst[1]) + ' ' + SENT_MARKER_END for lst in raw_contexts]    
+ 
         answer = _normalize_text(example["answer"])  
         
         if(len(answer) > 0):   # answer can be '' after normalize
             new_dict["data"].append(
                 create_para_dict(
                     create_example_dict(
-                        context=context,
+                        context=contexts,
                         answer=answer,
                         id = example["_id"],
                         question=_normalize_text(example["question"]),
@@ -290,7 +302,7 @@ class hotpotqaDataset(Dataset):
         
         tensors_list = []
         for paragraph in example["paragraphs"]:  # example["paragraphs"] only contains one paragraph in hotpotqa
-            context = paragraph["context"]
+            context = self.tokenizer.sep_token + ' ' + (' ' + self.tokenizer.sep_token + ' ').join(paragraph["context"] )
             doc_tokens = []
             char_to_word_offset = []
             prev_is_whitespace = True
@@ -981,9 +993,8 @@ class hotpotqa(pl.LightningModule):
         end_logits = end_logits.squeeze()
     #     print("start_logits: ", start_logits)
     #     print("end_logits: ", end_logits)
-        start_logits_indices = start_logits.topk(k=self.args.n_best_size, dim=-1).indices
-    #     print("start_logits_indices: ", start_logits_indices)
-        end_logits_indices = end_logits.topk(k=self.args.n_best_size, dim=-1).indices 
+	    start_logits_indices = start_logits.topk(k=min(self.args.n_best_size, start_logits.size(0)), dim=-1).indices 	
+        end_logits_indices = end_logits.topk(k=min(self.args.n_best_size, end_logits.size(0)), dim=-1).indices 
         if(len(start_logits_indices.size()) > 1):
             print("len(start_logits_indices.size()): ", len(start_logits_indices.size()))
             assert("len(start_logits_indices.size()) > 1")
@@ -1014,28 +1025,34 @@ class hotpotqa(pl.LightningModule):
 #             print("sorted_answers: " + str(sorted_answers))
 
             if len(sorted_answers) == 0:
-                answers.append({'text': 'NoAnswerFound', 'score': -1000000})
+                answers.append({'text': 'NoAnswerFound', 'score': -1000000, 'start_logit': -1000000, 'end_logit': -1000000, 'p_type_score': p_type_score})
             else:
                 answer = sorted_answers[0]
                 answer_token_ids = input_ids[0, answer['start']: answer['end'] + 1]
 
                 answer_tokens = self.tokenizer.convert_ids_to_tokens(answer_token_ids.tolist())
                 # remove [/sent], <t> and </t>
-                for special_token in [SENT_MARKER_END, TITLE_START, TITLE_END]:
-                    try:
-                        answer_tokens.remove(special_token)
-                    except:
-                        pass
+                for special_token in [SENT_MARKER_END, TITLE_START, TITLE_END, self.tokenizer.sep_token]:	
+                    try:	
+                        if(answer_tokens[0] == special_token):	
+                            answer['start_logit'] = -2000000	
+                        elif(answer_tokens[-1] == special_token):	
+                            answer['end_logit'] = -2000000	
+                            	
+                        answer_tokens.remove(special_token)	
+                    except:	
+                        pass	
+
 
                 text = self.tokenizer.convert_tokens_to_string(answer_tokens)
-    #             score = (answer['start_logit'] + answer['end_logit'] + p_type_score) / 3
-                score = (torch.sigmoid(answer['start_logit']) + torch.sigmoid(answer['end_logit']) + torch.sigmoid(p_type_score)) / 3
-                answers.append({'text': text, 'score': score})
+                score = (answer['start_logit'] + answer['end_logit'] + p_type_score) / 3
+                # score = (torch.sigmoid(answer['start_logit']) + torch.sigmoid(answer['end_logit']) + torch.sigmoid(p_type_score)) / 3
+                answers.append({'text': text, 'score': score, 'start_logit': answer['start_logit'], 'end_logit': answer['end_logit'], 'p_type_score': p_type_score})
     #             print("answers: " + str(answers))
-        elif p_type == 1: 
-            answers.append({'text': 'yes', 'score': p_type_score})
-        elif p_type == 2:
-            answers.append({'text': 'no', 'score': p_type_score}) 
+        elif p_type == 1: 	
+            answers.append({'text': 'yes', 'score': p_type_score, 'start_logit': -1000000, 'end_logit': -1000000, 'p_type_score': p_type_score})	
+        elif p_type == 2:	
+            answers.append({'text': 'no', 'score': p_type_score, 'start_logit': -1000000, 'end_logit': -1000000, 'p_type_score': p_type_score}) 
         else:
             assert False 
 
@@ -1182,18 +1199,18 @@ class hotpotqa(pl.LightningModule):
             
         print(f'after sync --> sizes: {len(answer_scores)}, {len(f1_scores)}, {len(em_scores)}')
  
-        avg_val_f1 = torch.tensor(sum(f1_scores) / len(f1_scores) ).type_as(avg_loss)   
-        avg_val_em = torch.tensor(sum(em_scores) / len(em_scores) ).type_as(avg_loss)    
-        avg_val_prec = torch.tensor(sum(prec_scores) / len(prec_scores) ).type_as(avg_loss)  
-        avg_val_recall = torch.tensor(sum(recall_scores) / len(recall_scores) ).type_as(avg_loss)   
-        avg_val_sp_sent_f1 = torch.tensor(sum(sp_sent_f1_scores) / len(sp_sent_f1_scores) ).type_as(avg_loss)   
-        avg_val_sp_sent_em = torch.tensor(sum(sp_sent_em_scores) / len(sp_sent_em_scores) ).type_as(avg_loss)    
-        avg_val_sp_sent_prec = torch.tensor(sum(sp_sent_prec_scores) / len(sp_sent_prec_scores) ).type_as(avg_loss)   
-        avg_val_sp_sent_recall = torch.tensor(sum(sp_sent_recall_scores) / len(sp_sent_recall_scores) ).type_as(avg_loss)    
-        avg_val_joint_f1 = torch.tensor(sum(joint_f1_scores) / len(joint_f1_scores) ).type_as(avg_loss)  
-        avg_val_joint_em = torch.tensor(sum(joint_em_scores) / len(joint_em_scores) ).type_as(avg_loss)  
-        avg_val_joint_prec = torch.tensor(sum(joint_prec_scores) / len(joint_prec_scores) ).type_as(avg_loss)   
-        avg_val_joint_recall = torch.tensor(sum(joint_recall_scores) / len(joint_recall_scores) ).type_as(avg_loss) 
+        avg_val_f1 = sum(f1_scores) / len(f1_scores)	
+        avg_val_em = sum(em_scores) / len(em_scores)	
+        avg_val_prec = sum(prec_scores) / len(prec_scores)	
+        avg_val_recall = sum(recall_scores) / len(recall_scores)
+        avg_val_sp_sent_f1 = sum(sp_sent_f1_scores) / len(sp_sent_f1_scores)  
+        avg_val_sp_sent_em = sum(sp_sent_em_scores) / len(sp_sent_em_scores)  
+        avg_val_sp_sent_prec = sum(sp_sent_prec_scores) / len(sp_sent_prec_scores)  
+        avg_val_sp_sent_recall = sum(sp_sent_recall_scores) / len(sp_sent_recall_scores)   
+        avg_val_joint_f1 = sum(joint_f1_scores) / len(joint_f1_scores) 
+        avg_val_joint_em = sum(joint_em_scores) / len(joint_em_scores)  
+        avg_val_joint_prec = sum(joint_prec_scores) / len(joint_prec_scores)
+        avg_val_joint_recall = sum(joint_recall_scores) / len(joint_recall_scores)
        
         print("avg_loss: ", avg_loss, end = '\t')   
         print("avg_answer_loss: ", avg_answer_loss, end = '\t') 
@@ -1254,9 +1271,10 @@ class hotpotqa(pl.LightningModule):
 
         pre_answer_score = answers_pred[0]['score']  # (start_logit + end_logit + p_type_score) / 3
         pre_answer = _normalize_text(answers_pred[0]['text'])
-        # print("pred answer_score: " + str(pre_answer_score))
-        # print("pred answer_text: " + str(pre_answer)) 
-
+	    start_logit = answers_pred[0]['start_logit']	
+        end_logit = answers_pred[0]['end_logit']	
+        type_score = answers_pred[0]['p_type_score']
+        
         gold_answer = _normalize_text(answer)
         f1, prec, recall = self.f1_score(pre_answer, gold_answer)
         em = self.exact_match_score(pre_answer, gold_answer) 
@@ -1288,6 +1306,17 @@ class hotpotqa(pl.LightningModule):
         else:
             sp_sent_em, sp_sent_precision, sp_sent_recall, sp_sent_f1 = torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
             joint_em, joint_f1, joint_prec, joint_recall =  torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
+
+        print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer) #, "\tstart_logits:\t", start_logits.cpu(), "\tend_logits:\t", end_logits.cpu(), "\ttype_logits:\t", type_logits.cpu())	
+        	
+        self.logger.log_metrics({'answer_loss': answer_loss, 'type_loss': type_loss, 'sp_para_loss': sp_para_loss, 'sp_sent_loss': sp_sent_loss,	
+                                    'answer_score': pre_answer_score, 'start_logit': start_logit, 'end_logit': end_logit,  	
+                                    'type_score': type_score,	
+                                    'f1': f1, 'prec':prec, 'recall':recall, 'em': em,
+                                    'sp_f1': sp_sent_f1, 'sp_prec': sp_sent_precision, 'sp_recall': sp_sent_recall,  'sp_em': sp_sent_em, 
+                                    'joint_f1': joint_f1, 'joint_prec': joint_prec, 'joint_recall': joint_recall, 'joint_em': joint_em
+                                }) 
+
 
         print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer)
 
@@ -1359,25 +1388,25 @@ class hotpotqa(pl.LightningModule):
            
             
         print(f'after sync --> sizes: {len(answer_scores)}')
-        avg_test_f1 = torch.tensor(sum(f1_scores) / len(f1_scores) ).type_as(avg_loss)   
-        avg_test_em = torch.tensor(sum(em_scores) / len(em_scores) ).type_as(avg_loss)    
-        avg_test_prec = torch.tensor(sum(prec_scores) / len(prec_scores) ).type_as(avg_loss)  
-        avg_test_recall = torch.tensor(sum(recall_scores) / len(recall_scores) ).type_as(avg_loss)   
-        avg_test_sp_sent_f1 = torch.tensor(sum(sp_sent_f1_scores) / len(sp_sent_f1_scores) ).type_as(avg_loss)   
-        avg_test_sp_sent_em = torch.tensor(sum(sp_sent_em_scores) / len(sp_sent_em_scores) ).type_as(avg_loss)    
-        avg_test_sp_sent_prec = torch.tensor(sum(sp_sent_prec_scores) / len(sp_sent_prec_scores) ).type_as(avg_loss)   
-        avg_test_sp_sent_recall = torch.tensor(sum(sp_sent_recall_scores) / len(sp_sent_recall_scores) ).type_as(avg_loss)    
-        avg_test_joint_f1 = torch.tensor(sum(joint_f1_scores) / len(joint_f1_scores) ).type_as(avg_loss)  
-        avg_test_joint_em = torch.tensor(sum(joint_em_scores) / len(joint_em_scores) ).type_as(avg_loss)  
-        avg_test_joint_prec = torch.tensor(sum(joint_prec_scores) / len(joint_prec_scores) ).type_as(avg_loss)   
-        avg_test_joint_recall = torch.tensor(sum(joint_recall_scores) / len(joint_recall_scores) ).type_as(avg_loss) 
+        avg_test_f1 = sum(f1_scores) / len(f1_scores) 
+        avg_test_em =  sum(em_scores) / len(em_scores)     
+        avg_test_prec =  sum(prec_scores) / len(prec_scores)   
+        avg_test_recall =  sum(recall_scores) / len(recall_scores)  
+        avg_test_sp_sent_f1 =  sum(sp_sent_f1_scores) / len(sp_sent_f1_scores)    
+        avg_test_sp_sent_em =  sum(sp_sent_em_scores) / len(sp_sent_em_scores) 
+        avg_test_sp_sent_prec =  sum(sp_sent_prec_scores) / len(sp_sent_prec_scores)     
+        avg_test_sp_sent_recall =  sum(sp_sent_recall_scores) / len(sp_sent_recall_scores)  
+        avg_test_joint_f1 =  sum(joint_f1_scores) / len(joint_f1_scores)    
+        avg_test_joint_em = sum(joint_em_scores) / len(joint_em_scores)    
+        avg_test_joint_prec = sum(joint_prec_scores) / len(joint_prec_scores)  
+        avg_test_joint_recall = sum(joint_recall_scores) / len(joint_recall_scores)   
           
         logs = {'avg_test_loss': avg_loss, 'avg_test_answer_loss': avg_answer_loss, 'avg_test_type_loss': avg_type_loss, 'avg_test_sp_para_loss': avg_sp_para_loss, 'avg_test_sp_sent_loss': avg_sp_sent_loss,   
                 'avg_test_f1': avg_test_f1 , 'avg_test_em': avg_test_em,  'avg_test_prec': avg_test_prec, 'avg_test_recall': avg_test_recall ,    
                 'avg_test_sp_sent_f1': avg_test_sp_sent_f1, 'avg_test_sp_sent_em': avg_test_sp_sent_em,  'avg_test_sp_sent_prec': avg_test_sp_sent_prec, 'avg_test_sp_sent_recall': avg_test_sp_sent_recall,    
                 'avg_test_joint_f1': avg_test_joint_f1, 'avg_test_joint_em': avg_test_joint_em,  'avg_test_joint_prec': avg_test_joint_prec, 'avg_test_joint_recall': avg_test_joint_recall 
         }   
-        return logs 
+        return {'avg_test_loss': avg_loss, 'log': logs}
 
 # ##### add_model_specific_args
 
@@ -1442,10 +1471,11 @@ def main(args):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed) 
 
-    import shutil
-    save_folder = os.path.join(args.save_dir, args.save_prefix)
-    if os.path.exists(save_folder):
-        shutil.rmtree(save_folder, ignore_errors=True)  #delete non-empty folder
+    if not args.test:     # if it needs to train, remove exsiting folder
+        import shutil
+        save_folder = os.path.join(args.save_dir, args.save_prefix)
+        if os.path.exists(save_folder):
+            shutil.rmtree(save_folder, ignore_errors=True)  #delete non-empty folder
     
     # In[ ]:
     
@@ -1497,7 +1527,7 @@ def main(args):
     # In[ ]:
     
     
-    trainer = pl.Trainer(gpus=gpu_ids, distributed_backend='ddp' if gpu_ids and (len(gpu_ids) > 1) else None,
+    trainer = pl.Trainer(gpus=-1, distributed_backend='ddp' if gpu_ids and (len(gpu_ids) > 1) else None,
                          track_grad_norm=-1, max_epochs=args.epochs, early_stop_callback=None, replace_sampler_ddp=False,
                          accumulate_grad_batches=args.batch_size,
                          train_percent_check = args.train_percent,
@@ -1518,8 +1548,8 @@ def main(args):
     # In[ ]:
     
     
-    #     if not args.test:
-    trainer.fit(model)
+    if not args.test:
+        trainer.fit(model)
     
     
     # In[ ]:
