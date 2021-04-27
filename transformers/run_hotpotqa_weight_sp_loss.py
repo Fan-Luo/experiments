@@ -1069,28 +1069,35 @@ class hotpotqa(pl.LightningModule):
         sent_indexes = self._get_special_index(input_ids, [SENT_MARKER_END])
         para_indexes = self._get_special_index(input_ids, [TITLE_START])
 
-        s_to_p_map = []
+        s_to_p_map = []   
         for s in sent_indexes:
             s_to_p = torch.where(torch.le(para_indexes, s))[0][-1]     # last para_index smaller or equal to s
-            s_to_p_map.append(s_to_p.item()) 
-#         print("s_to_p_map: " + str(s_to_p_map))
-
-#         print("sp_para_logits", sp_para_logits)
-#         print("sp_sent_logits", sp_sent_logits)
-        sp_para_top2 = sp_para_logits.squeeze().topk(k=min(sp_para_logits.squeeze().size(0), 2)).indices 
-        sp_sent_top12 = sp_sent_logits.squeeze().topk(k=min(sp_sent_logits.squeeze().size(0), 12)).indices
-#         print("sp_para_top2", sp_para_top2)
-#         print("sp_sent_top12", sp_sent_top12)
-
-        sp_sent_pred = set()
-        sp_para_pred = set(sp_para_top2.tolist())
-        for sp_sent in sp_sent_top12:
-            sp_sent_to_para = s_to_p_map[sp_sent.item()]
-            if sp_sent_to_para in sp_para_top2:
-                sp_sent_pred.add(sp_sent.item())
-    #             sp_para_pred.add(sp_sent_to_para) 
-#         print("sp_sent_pred: " + str(sp_sent_pred))
-#         print("sp_para_pred: " + str(sp_para_pred))
+            s_to_p_map.append(s_to_p.item())  # [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 2, 3, 4, 5, 5, 5, 6, 7, 7, 7, 7, 8, 9]
+        if(len(s_to_p_map)>0):      # https://arxiv.org/pdf/2004.06753.pdf section 3.3
+            para_sent_logits_sum = torch.tensor([], device=sp_sent_logits.device)  
+            evidence_candidates = {}
+            para_sents_offset = [0]
+            for i in range(s_to_p_map[-1]+1):
+                para_sent_logits = torch.masked_select(sp_sent_logits.squeeze(), torch.tensor([p==i for p in s_to_p_map])) 
+               
+                para_sent_logits_sum = torch.cat([para_sent_logits_sum, torch.sum(para_sent_logits).unsqueeze(0) ]) 
+                para_sents_offset.append(para_sent_logits.numel()+para_sents_offset[-1])  # [0, 21, 22, 24, 25, 26, 29, 30, 34, 35, 36], one more elements than num of paras   
+                evidence_candidates[i] = torch.gt(para_sent_logits, 0.1).nonzero(as_tuple=True)[0]  # 0.1 is the threshold to be a candidate sentences
+                 
+            # para_sent_logits_sum: tensor([ 7.8180e-01,  6.8700e-02,  1.6170e-01,  7.4000e-02,  6.0000e-04,  2.2680e-01, -3.0400e-02,  9.3400e-02,  1.1200e-01,  1.2470e-01])
+            # evidence_candidates: sentences with logits larger than threshold in each para,  [tensor([ 1,  2,  4,  5,  6,  7,  8,  9, 10, 11, 13, 14, 16, 17, 19, 20]), tensor([0]), tensor([0, 1]), tensor([0]), tensor([0]), tensor([0, 1, 2]), tensor([], dtype=torch.int64), tensor([0, 2]), tensor([0]), tensor([0])]
+            sp_para_pred = para_sent_logits_sum.squeeze().topk(k=min(para_sent_logits_sum.numel(), 2)).indices  # sp are from <=2 paragraphs
+             
+            sp_sent_pred = []
+            if(sp_para_pred.numel() > 1):
+                for para_idx in sp_para_pred: 
+                    if(para_idx.item() in evidence_candidates):
+                        sp_sent_pred.extend([(para_sents_offset[para_idx]+sent).item() for sent in evidence_candidates[para_idx.item()]]) 
+            elif(sp_para_pred.numel()==1 and sp_para_pred.item() in evidence_candidates):
+                sp_sent_pred = [(para_sents_offset[sp_para_pred]+sent).item() for sent in evidence_candidates[sp_para_pred.item()]]
+        else:
+            sp_sent_pred = []
+            sp_para_pred = [] 
         return (answers, sp_sent_pred, sp_para_pred)
 
 
