@@ -978,10 +978,19 @@ class hotpotqa(pl.LightningModule):
             sp_sent_em, sp_sent_precision, sp_sent_recall, sp_sent_f1 = torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
             joint_em, joint_f1, joint_prec, joint_recall =  torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
 
-
+        if(len(sp_para_pred) > 0): 
+            sp_para_em, sp_para_precision, sp_para_recall, sp_para_f1 = self.sp_metrics(sp_para_pred, torch.where(sp_para.squeeze())[0].tolist())
+            sp_para_em = torch.tensor(sp_para_em).type_as(loss)
+            sp_para_precision = torch.tensor(sp_para_precision).type_as(loss)
+            sp_para_recall = torch.tensor(sp_para_recall).type_as(loss)
+            sp_para_f1 = torch.tensor(sp_para_f1).type_as(loss)
+        else:
+            sp_para_em, sp_para_precision, sp_para_recall, sp_para_f1 = torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
+            
         return { 'vloss': loss, 'answer_loss': answer_loss, 'type_loss': type_loss, 'sp_para_loss': sp_para_loss, 'sp_sent_loss': sp_sent_loss,
                    'answer_score': pre_answer_score, 'f1': f1, 'prec':prec, 'recall':recall, 'em': em,
-                   'sp_em': sp_sent_em, 'sp_f1': sp_sent_f1, 'sp_prec': sp_sent_precision, 'sp_recall': sp_sent_recall,
+                   'sp_sent_em': sp_sent_em, 'sp_sent_f1': sp_sent_f1, 'sp_sent_precision': sp_sent_precision, 'sp_sent_recall': sp_sent_recall,
+                   'sp_para_em': sp_para_em, 'sp_para_f1': sp_para_f1, 'sp_para_precision': sp_para_precision, 'sp_para_recall': sp_para_recall,
                    'joint_em': joint_em, 'joint_f1': joint_f1, 'joint_prec': joint_prec, 'joint_recall': joint_recall}
 
 
@@ -1168,10 +1177,14 @@ class hotpotqa(pl.LightningModule):
         em_scores = [x['em'] for x in outputs]  
         prec_scores =  [x['prec'] for x in outputs] 
         recall_scores = [x['recall'] for x in outputs]  
-        sp_sent_f1_scores = [x['sp_f1'] for x in outputs]   
-        sp_sent_em_scores = [x['sp_em'] for x in outputs]   
-        sp_sent_prec_scores = [x['sp_prec'] for x in outputs]   
-        sp_sent_recall_scores = [x['sp_recall'] for x in outputs]   
+        sp_sent_f1_scores = [x['sp_sent_f1'] for x in outputs]   
+        sp_sent_em_scores = [x['sp_sent_em'] for x in outputs]   
+        sp_sent_prec_scores = [x['sp_sent_precision'] for x in outputs]   
+        sp_sent_recall_scores = [x['sp_sent_recall'] for x in outputs]   
+        sp_para_f1_scores = [x['sp_para_f1'] for x in outputs]   
+        sp_para_em_scores = [x['sp_para_em'] for x in outputs]   
+        sp_para_prec_scores = [x['sp_para_precision'] for x in outputs]   
+        sp_para_recall_scores = [x['sp_para_recall'] for x in outputs]   
         joint_f1_scores = [x['joint_f1'] for x in outputs]  
         joint_em_scores = [x['joint_em'] for x in outputs]  
         joint_prec_scores = [x['joint_prec'] for x in outputs]  
@@ -1202,7 +1215,10 @@ class hotpotqa(pl.LightningModule):
             sp_sent_em_scores = self.sync_list_across_gpus(sp_sent_em_scores, avg_loss.device, torch.float)
             sp_sent_prec_scores = self.sync_list_across_gpus(sp_sent_prec_scores, avg_loss.device, torch.float)
             sp_sent_recall_scores = self.sync_list_across_gpus(sp_sent_recall_scores, avg_loss.device, torch.float)
-            
+            sp_para_f1_scores = self.sync_list_across_gpus(sp_para_f1_scores, avg_loss.device, torch.float)
+            sp_para_em_scores = self.sync_list_across_gpus(sp_para_em_scores, avg_loss.device, torch.float)
+            sp_para_prec_scores = self.sync_list_across_gpus(sp_para_prec_scores, avg_loss.device, torch.float)
+            sp_para_recall_scores = self.sync_list_across_gpus(sp_para_recall_scores, avg_loss.device, torch.float)
             joint_f1_scores = self.sync_list_across_gpus(joint_f1_scores, avg_loss.device, torch.float)
             joint_em_scores = self.sync_list_across_gpus(joint_em_scores, avg_loss.device, torch.float)
             joint_prec_scores = self.sync_list_across_gpus(joint_prec_scores, avg_loss.device, torch.float)
@@ -1219,6 +1235,10 @@ class hotpotqa(pl.LightningModule):
         avg_val_sp_sent_em = sum(sp_sent_em_scores) / len(sp_sent_em_scores)  
         avg_val_sp_sent_prec = sum(sp_sent_prec_scores) / len(sp_sent_prec_scores)  
         avg_val_sp_sent_recall = sum(sp_sent_recall_scores) / len(sp_sent_recall_scores)   
+        avg_val_sp_para_f1 = sum(sp_para_f1_scores) / len(sp_para_f1_scores)  
+        avg_val_sp_para_em = sum(sp_para_em_scores) / len(sp_para_em_scores)  
+        avg_val_sp_para_prec = sum(sp_para_prec_scores) / len(sp_para_prec_scores)  
+        avg_val_sp_para_recall = sum(sp_para_recall_scores) / len(sp_para_recall_scores)  
         avg_val_joint_f1 = sum(joint_f1_scores) / len(joint_f1_scores) 
         avg_val_joint_em = sum(joint_em_scores) / len(joint_em_scores)  
         avg_val_joint_prec = sum(joint_prec_scores) / len(joint_prec_scores)
@@ -1237,6 +1257,10 @@ class hotpotqa(pl.LightningModule):
         print("avg_val_sp_sent_em: " , avg_val_sp_sent_em, end = '\t')  
         print("avg_val_sp_sent_prec: ", avg_val_sp_sent_prec, end = '\t')   
         print("avg_val_sp_sent_recall: ", avg_val_sp_sent_recall)   
+        print("avg_val_sp_para_f1: ", avg_val_sp_para_f1, end = '\t')   
+        print("avg_val_sp_para_em: " , avg_val_sp_para_em, end = '\t')  
+        print("avg_val_sp_para_prec: ", avg_val_sp_para_prec, end = '\t')   
+        print("avg_val_sp_para_recall: ", avg_val_sp_para_recall)   
         print("avg_val_joint_f1: " , avg_val_joint_f1, end = '\t')  
         print("avg_val_joint_em: ", avg_val_joint_em, end = '\t')   
         print("avg_val_joint_prec: ", avg_val_joint_prec, end = '\t')   
@@ -1246,7 +1270,8 @@ class hotpotqa(pl.LightningModule):
         logs = {'avg_val_loss': avg_loss, 'avg_val_answer_loss': avg_answer_loss, 'avg_val_type_loss': avg_type_loss, 
                 'avg_val_sp_para_loss': avg_sp_para_loss, 'avg_val_sp_sent_loss': avg_sp_sent_loss,   
                 'avg_val_f1': avg_val_f1 , 'avg_val_em': avg_val_em,  'avg_val_prec': avg_val_prec, 'avg_val_recall': avg_val_recall ,    
-                'avg_val_sp_sent_f1': avg_val_sp_sent_f1, 'avg_val_sp_sent_em': avg_val_sp_sent_em,  'avg_val_sp_sent_prec': avg_val_sp_sent_prec, 'avg_val_sp_sent_recall': avg_val_sp_sent_recall,    
+                'avg_val_sp_sent_f1': avg_val_sp_sent_f1, 'avg_val_sp_sent_em': avg_val_sp_sent_em,  'avg_val_sp_sent_prec': avg_val_sp_sent_prec, 'avg_val_sp_sent_recall': avg_val_sp_sent_recall, 
+                'avg_val_sp_para_f1': avg_val_sp_para_f1, 'avg_val_sp_para_em': avg_val_sp_para_em,  'avg_val_sp_para_prec': avg_val_sp_para_prec, 'avg_val_sp_para_recall': avg_val_sp_para_recall,   
                 'avg_val_joint_f1': avg_val_joint_f1, 'avg_val_joint_em': avg_val_joint_em,  'avg_val_joint_prec': avg_val_joint_prec, 'avg_val_joint_recall': avg_val_joint_recall 
         }   
        
@@ -1319,13 +1344,23 @@ class hotpotqa(pl.LightningModule):
             sp_sent_em, sp_sent_precision, sp_sent_recall, sp_sent_f1 = torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
             joint_em, joint_f1, joint_prec, joint_recall =  torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
 
+        if(len(sp_para_pred) > 0):
+            sp_para_em, sp_para_precision, sp_para_recall, sp_para_f1 = self.sp_metrics(sp_para_pred, torch.where(sp_para.squeeze())[0].tolist())
+            sp_para_em = torch.tensor(sp_para_em).type_as(loss)
+            sp_para_precision = torch.tensor(sp_para_precision).type_as(loss)
+            sp_para_recall = torch.tensor(sp_para_recall).type_as(loss)
+            sp_para_f1 = torch.tensor(sp_para_f1).type_as(loss)
+        else:
+            sp_para_em, sp_para_precision, sp_para_recall, sp_para_f1 = torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
+
         print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer) #, "\tstart_logits:\t", start_logits.cpu(), "\tend_logits:\t", end_logits.cpu(), "\ttype_logits:\t", type_logits.cpu()) 
             
         self.logger.log_metrics({'answer_loss': answer_loss, 'type_loss': type_loss, 'sp_para_loss': sp_para_loss, 'sp_sent_loss': sp_sent_loss,    
                                     'answer_score': pre_answer_score, 'start_logit': start_logit, 'end_logit': end_logit,   
                                     'type_score': type_score,   
                                     'f1': f1, 'prec':prec, 'recall':recall, 'em': em,
-                                    'sp_f1': sp_sent_f1, 'sp_prec': sp_sent_precision, 'sp_recall': sp_sent_recall,  'sp_em': sp_sent_em, 
+                                    'sp_sent_f1': sp_sent_f1, 'sp_sent_precision': sp_sent_precision, 'sp_sent_recall': sp_sent_recall,  'sp_sent_em': sp_sent_em, 
+                                    'sp_para_f1': sp_para_f1, 'sp_para_precision': sp_para_precision, 'sp_para_recall': sp_para_recall,  'sp_para_em': sp_para_em, 
                                     'joint_f1': joint_f1, 'joint_prec': joint_prec, 'joint_recall': joint_recall, 'joint_em': joint_em
                                 }) 
 
@@ -1334,7 +1369,8 @@ class hotpotqa(pl.LightningModule):
 
         return { 'vloss': loss, 'answer_loss': answer_loss, 'type_loss': type_loss, 'sp_para_loss': sp_para_loss, 'sp_sent_loss': sp_sent_loss,
                    'answer_score': pre_answer_score, 'f1': f1, 'prec':prec, 'recall':recall, 'em': em,
-                   'sp_em': sp_sent_em, 'sp_f1': sp_sent_f1, 'sp_prec': sp_sent_precision, 'sp_recall': sp_sent_recall,
+                   'sp_sent_f1': sp_sent_f1, 'sp_sent_precision': sp_sent_precision, 'sp_sent_recall': sp_sent_recall,  'sp_sent_em': sp_sent_em, 
+                    'sp_para_f1': sp_para_f1, 'sp_para_precision': sp_para_precision, 'sp_para_recall': sp_para_recall,  'sp_para_em': sp_para_em, 
                    'joint_em': joint_em, 'joint_f1': joint_f1, 'joint_prec': joint_prec, 'joint_recall': joint_recall}
 
 
@@ -1358,10 +1394,14 @@ class hotpotqa(pl.LightningModule):
         em_scores = [x['em'] for x in outputs]  
         prec_scores =  [x['prec'] for x in outputs] 
         recall_scores = [x['recall'] for x in outputs]  
-        sp_sent_f1_scores = [x['sp_f1'] for x in outputs]   
-        sp_sent_em_scores = [x['sp_em'] for x in outputs]   
-        sp_sent_prec_scores = [x['sp_prec'] for x in outputs]   
-        sp_sent_recall_scores = [x['sp_recall'] for x in outputs]   
+	    sp_sent_f1_scores = [x['sp_sent_f1'] for x in outputs]   
+        sp_sent_em_scores = [x['sp_sent_em'] for x in outputs]   
+        sp_sent_prec_scores = [x['sp_sent_precision'] for x in outputs]   
+        sp_sent_recall_scores = [x['sp_sent_recall'] for x in outputs]   
+        sp_para_f1_scores = [x['sp_para_f1'] for x in outputs]   
+        sp_para_em_scores = [x['sp_para_em'] for x in outputs]   
+        sp_para_prec_scores = [x['sp_para_precision'] for x in outputs]   
+        sp_para_recall_scores = [x['sp_para_recall'] for x in outputs]         
         joint_f1_scores = [x['joint_f1'] for x in outputs]  
         joint_em_scores = [x['joint_em'] for x in outputs]  
         joint_prec_scores = [x['joint_prec'] for x in outputs]  
@@ -1392,6 +1432,11 @@ class hotpotqa(pl.LightningModule):
             sp_sent_prec_scores = self.sync_list_across_gpus(sp_sent_prec_scores, avg_loss.device, torch.float)
             sp_sent_recall_scores = self.sync_list_across_gpus(sp_sent_recall_scores, avg_loss.device, torch.float)
             
+            sp_para_f1_scores = self.sync_list_across_gpus(sp_para_f1_scores, avg_loss.device, torch.float)
+            sp_para_em_scores = self.sync_list_across_gpus(sp_para_em_scores, avg_loss.device, torch.float)
+            sp_para_prec_scores = self.sync_list_across_gpus(sp_para_prec_scores, avg_loss.device, torch.float)
+            sp_para_recall_scores = self.sync_list_across_gpus(sp_para_recall_scores, avg_loss.device, torch.float)       
+            
             joint_f1_scores = self.sync_list_across_gpus(joint_f1_scores, avg_loss.device, torch.float)
             joint_em_scores = self.sync_list_across_gpus(joint_em_scores, avg_loss.device, torch.float)
             joint_prec_scores = self.sync_list_across_gpus(joint_prec_scores, avg_loss.device, torch.float)
@@ -1408,6 +1453,10 @@ class hotpotqa(pl.LightningModule):
         avg_test_sp_sent_em =  sum(sp_sent_em_scores) / len(sp_sent_em_scores) 
         avg_test_sp_sent_prec =  sum(sp_sent_prec_scores) / len(sp_sent_prec_scores)     
         avg_test_sp_sent_recall =  sum(sp_sent_recall_scores) / len(sp_sent_recall_scores)  
+        avg_test_sp_para_f1 =  sum(sp_para_f1_scores) / len(sp_para_f1_scores)    
+        avg_test_sp_para_em =  sum(sp_para_em_scores) / len(sp_para_em_scores) 
+        avg_test_sp_para_prec =  sum(sp_para_prec_scores) / len(sp_para_prec_scores)     
+        avg_test_sp_para_recall =  sum(sp_para_recall_scores) / len(sp_para_recall_scores)  
         avg_test_joint_f1 =  sum(joint_f1_scores) / len(joint_f1_scores)    
         avg_test_joint_em = sum(joint_em_scores) / len(joint_em_scores)    
         avg_test_joint_prec = sum(joint_prec_scores) / len(joint_prec_scores)  
@@ -1416,6 +1465,7 @@ class hotpotqa(pl.LightningModule):
         logs = {'avg_test_loss': avg_loss, 'avg_test_answer_loss': avg_answer_loss, 'avg_test_type_loss': avg_type_loss, 'avg_test_sp_para_loss': avg_sp_para_loss, 'avg_test_sp_sent_loss': avg_sp_sent_loss,   
                 'avg_test_f1': avg_test_f1 , 'avg_test_em': avg_test_em,  'avg_test_prec': avg_test_prec, 'avg_test_recall': avg_test_recall ,    
                 'avg_test_sp_sent_f1': avg_test_sp_sent_f1, 'avg_test_sp_sent_em': avg_test_sp_sent_em,  'avg_test_sp_sent_prec': avg_test_sp_sent_prec, 'avg_test_sp_sent_recall': avg_test_sp_sent_recall,    
+                'avg_test_sp_para_f1': avg_test_sp_para_f1, 'avg_test_sp_para_em': avg_test_sp_para_em,  'avg_test_sp_para_prec': avg_test_sp_para_prec, 'avg_test_sp_para_recall': avg_test_sp_para_recall,  
                 'avg_test_joint_f1': avg_test_joint_f1, 'avg_test_joint_em': avg_test_joint_em,  'avg_test_joint_prec': avg_test_joint_prec, 'avg_test_joint_recall': avg_test_joint_recall 
         }   
         return {'avg_test_loss': avg_loss, 'log': logs}

@@ -1355,9 +1355,6 @@ class hotpotqa(pl.LightningModule):
             sp_para_em, sp_para_precision, sp_para_recall, sp_para_f1 = torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss), torch.tensor(0.0).type_as(loss)
             
         
-        
-        print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer) #, "\tstart_logits:\t", start_logits.cpu(), "\tend_logits:\t", end_logits.cpu(), "\ttype_logits:\t", type_logits.cpu()) 
-            
         self.logger.log_metrics({'answer_loss': answer_loss, 'type_loss': type_loss, 'sp_para_loss': sp_para_loss, 'sp_sent_loss': sp_sent_loss,    
                                     'answer_score': pre_answer_score, 'start_logit': start_logit, 'end_logit': end_logit,   
                                     'type_score': type_score,   
@@ -1368,7 +1365,9 @@ class hotpotqa(pl.LightningModule):
                                 }) 
 
 
+        # print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer, "\tstart_logits:\t", start_logits.cpu(), "\tend_logits:\t", end_logits.cpu(), "\ttype_logits:\t", type_logits.cpu()) 
         print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer)
+
 
         return { 'vloss': loss, 'answer_loss': answer_loss, 'type_loss': type_loss, 'sp_para_loss': sp_para_loss, 'sp_sent_loss': sp_sent_loss,
                    'answer_score': pre_answer_score, 'f1': f1, 'prec':prec, 'recall':recall, 'em': em,
