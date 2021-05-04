@@ -1015,7 +1015,7 @@ class hotpotqa(pl.LightningModule):
         output = self.forward(input_ids, input_mask, segment_ids, subword_starts, subword_ends, q_type, sp_sent, sp_para)
         answer_loss, type_loss, sp_para_loss, sp_sent_loss, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output, input_stage2_ids, sp_para_map, sp_sent_map = output 
         loss = answer_loss + 5*type_loss + 10*sp_para_loss + 10*sp_sent_loss
- 
+        # print("qid: " + str(qid))
         answers_pred, sp_sent_pred, sp_para_pred = self.decode(input_stage2_ids, start_logits, end_logits, type_logits, sp_para_output, sp_sent_output, sp_para_map, sp_sent_map)
  
  
@@ -1193,10 +1193,12 @@ class hotpotqa(pl.LightningModule):
             elif(sp_para_pred.numel()==1 and sp_para_pred.item() in evidence_candidates):
                 sp_sent_pred = [(para_sents_offset[sp_para_pred]+sent).item() for sent in evidence_candidates[sp_para_pred.item()]]
                 
+            # print("sp_sent_pred: " + str(sp_sent_pred))
             for idx, sp_sent in enumerate(sp_sent_pred):
-                sp_sent_pred[idx] = sp_sent_map[sp_sent.item()]
+                sp_sent_pred[idx] = sp_sent_map[sp_sent]
             for idx, sp_para in enumerate(sp_para_pred):
                 sp_para_pred[idx] = sp_para_map[sp_para.item()]
+            sp_para_pred = sp_para_pred.tolist()
         else:
             sp_sent_pred = []
             sp_para_pred = [] 
