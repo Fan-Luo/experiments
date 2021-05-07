@@ -126,9 +126,9 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
         print("_id: ", example["_id"], end ='\t')
         print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
         
-        question = _normalize_text(example["question"])
+        question = basic_normalize(example["question"])
         question_doc = nlp2(question)
-        question_phrases = [(remove_punc(p.text.lower()), p.rank) for p in question_doc._.phrases if(p.text != '')] 
+        question_phrases = [(_normalize_text(p.text), p.rank) for p in question_doc._.phrases if(p.text != '')] 
         question_phrases_text = [p[0] for p in question_phrases] 
         # question_phrases_text = set(list(flatten([p.split() for p in question_phrases_text])) + question_phrases_text) # add phrase words
 
@@ -143,8 +143,8 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
             print("process paragraph ", i, end ='\t')
             print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
         
-            title = _normalize_text(para_context[0])    
-            sents = [ _normalize_text(sent) for sent in para_context[1]]
+            title = basic_normalize(para_context[0])    
+            sents = [ basic_normalize(sent) for sent in para_context[1]]
             
             num_sents_before_coref_resolved = len(sents) 
             sents_joint =  (' ' + SENT_MARKER_END +' ').join(sents)
@@ -163,7 +163,7 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
             
             para_phrases = []                                        
             for sent_doc in sent_docs:                                    # each sent in a para
-                sent_phrases = [(remove_punc(p.text.lower()), p.rank) for p in sent_doc._.phrases if(p.text != '')]  # phrases from each sentence 
+                sent_phrases = [(_normalize_text(p.text), p.rank) for p in sent_doc._.phrases if(p.text != '')]  # phrases from each sentence 
                 para_phrases.append(sent_phrases)       
             paras_phrases.append(para_phrases)    
             
@@ -258,7 +258,7 @@ def create_relevant_graph(paras_phrases, question_phrases_text):
 
 
 def find_common_mapping(G, question_phrases_text):
-    # fuzzy macth for common phrases: map pharse similar to question phrases to question phrase, then find common phrases
+    # fuzzy macth for common phrases: map phrases similar to question phrases to question phrase, then find common phrases
     common_phrases = set()
     mapping = {}
     for phrase in G.nodes:
@@ -278,7 +278,7 @@ def find_common_mapping(G, question_phrases_text):
 
 def inclusion_best_match(query, choices):
     if (utils.full_process(query) and choices != []):  # only exectute when query is valid. To avoid WARNING:root:Applied processor reduces input query to empty string, all comparisons will have score 0.
-        inclusion_phrases = [simi_phrase for (simi_phrase, similarity) in process.extractBests(query, choices, scorer=fuzz.token_set_ratio) if similarity ==100]  # match '1977 film' and '1977', but will not match substring 'woman' and 'businesswoman', avid nosiy such as 'music' and 'us'
+        inclusion_phrases = [simi_phrase for (simi_phrase, similarity) in process.extractBests(query, choices, scorer=fuzz.token_set_ratio) if similarity ==100]  # match '1977 film' and '1977', but will not match substring 'woman' and 'businesswoman', avid noise such as 'music' and 'us'
         if(inclusion_phrases!= []):
             simi_phrase, similarity = process.extractOne(query, inclusion_phrases, scorer=fuzz.ratio) # most similar   
             if(similarity >= 50):    
@@ -390,33 +390,36 @@ def construct_reduced_supporting_facts(supporting_facts, reduced_contexts, kept_
 
 
 # revised for extractiing phrases, case matters for phrases extraction
-def _normalize_text(s):
-
-#     def remove_articles(text):
-#         return re.sub(r'\b(a|an|the)\b', ' ', text)
-
-    def white_space_fix(text):
-        return ' '.join(text.split())
-
-    def remove_sentence_end(text):
-        exclude = set(['.', '?'])
-        return ''.join(ch for ch in text if ch not in exclude)
-
-#     def remove_stop_words(text):
-#         all_stopwords = set(nlp.Defaults.stop_words)
-#         return ' '.join(word for word in text.split() if word not in all_stopwords) 
-    def remove_wh_words(text):
-        wh_words = set(["what", "when", 'where', "which", "who", "whom", "whose", "why", "how", "whether"])
-        return ' '.join(word for word in text.split() if word not in wh_words) 
-    
-    return white_space_fix(remove_wh_words(remove_sentence_end(s)))
-
 def lower(text):
     return text.lower()
 
 def remove_punc(text):
     exclude = set(string.punctuation)
     return ''.join(ch for ch in text if ch not in exclude)
+
+def remove_articles(text):
+    return re.sub(r'\b(a|an|the)\b', ' ', text)
+ 
+def basic_normalize(s):
+    def white_space_fix(text):
+        return ' '.join(text.split())
+
+    def replace_sentence_end(text):
+        exclude = set(['.', '?'])
+        return ''.join(ch if ch not in exclude  else ',' for ch in str(text))
+
+#     def remove_stop_words(text):
+#         all_stopwords = set(nlp.Defaults.stop_words)
+#         return ' '.join(word for word in text.split() if word not in all_stopwords) 
+    def remove_wh_words(text):
+        wh_words = set(["what", "when", 'where', "which", "who", "whom", "whose", "why", "how", "whether",
+                        "What", "When", 'Where', "Which", "Who", "Whom", "Whose", "Why", "How", "Whether"])
+        return ' '.join(word for word in text.split() if word not in wh_words) 
+
+    return white_space_fix(remove_wh_words(replace_sentence_end(str(s))))
+
+def _normalize_text(s):
+    return basic_normalize(remove_articles(remove_punc(lower(str(s)))))
  
 import json
 import argparse 
