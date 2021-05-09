@@ -392,9 +392,10 @@ class TextRank:
 
         if(self.chunk_type == 'noun' or self.chunk_type == 'both'):
             for chunk in self.doc.noun_chunks:
-                self.collect_phrases(chunk)
-                root_span = Span(self.doc, chunk.root.i, chunk.root.i+1)
-                self.collect_phrases(root_span)
+                if(chunk.text not in [entity.text for entity in self.doc.ents]):
+                    self.collect_phrases(chunk)
+                    root_span = Span(self.doc, chunk.root.i, chunk.root.i+1)
+                    self.collect_phrases(root_span)
         if(self.chunk_type == 'ner' or self.chunk_type == 'both'):
             for ent in self.doc.ents:
                 self.collect_phrases(ent)

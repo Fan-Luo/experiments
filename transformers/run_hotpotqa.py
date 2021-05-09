@@ -1366,7 +1366,8 @@ class hotpotqa(pl.LightningModule):
 
 
         # print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer, "\tstart_logits:\t", start_logits.cpu(), "\tend_logits:\t", end_logits.cpu(), "\ttype_logits:\t", type_logits.cpu()) 
-        print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer)
+        print("pre_answer:\t", pre_answer, "\tgold_answer:\t", gold_answer) 
+        print("sp_sent_pred:\t", sp_sent_pred, "\tsp_sent_gold:\t", torch.where(sp_sent.squeeze())[0].tolist(), "\tsp_para_pred:\t", sp_para_pred.tolist(), "\tsp_para_gold:\t", torch.where(sp_para.squeeze())[0].tolist())
 
 
         return { 'vloss': loss, 'answer_loss': answer_loss, 'type_loss': type_loss, 'sp_para_loss': sp_para_loss, 'sp_sent_loss': sp_sent_loss,

@@ -44,7 +44,7 @@ nlp1.tokenizer.add_special_case('</sent>', [{ ORTH: '</sent>', LEMMA: '</sent>',
 nlp1.tokenizer.add_special_case('</t>', [{ORTH: '</t>', LEMMA: '</t>', POS: 'SYM'}]) 
 nlp1.tokenizer.add_special_case('<t>', [{ORTH: '<t>', LEMMA: '<t>', POS: 'SYM'}])  
 import neuralcoref
-neuralcoref.add_to_pipe(nlp1, greedyness=0.55) # between 0 and 1. The default value is 0.5.
+neuralcoref.add_to_pipe(nlp1, greedyness=0.53) # between 0 and 1. The default value is 0.5.
 
 
 #!python -m pip install pytextrank
@@ -194,12 +194,23 @@ def reduce_context_with_phares_graph(json_dict, outfile, gold_paras_only=False):
         print("after path finding", end ='\t')
         print(datetime.now(timeZ_Az).strftime("%Y-%m-%d %H:%M:%S"))
 
-        # expand to include merged nodes, that is, also include phrases that from the same dup_set 
+        # expand to include previously mapped nodes 
+        reversed_mapping = {} 
+        for k,v in mapping.items():
+            if v in reversed_mapping:
+                reversed_mapping[v].append(k)
+            else:
+                reversed_mapping[v] = [k] 
+        for phrase in extended_phrases:        
+            if phrase in reversed_mapping:
+                extended_phrases.extend(reversed_mapping[phrase])
+        
+        # futher expand to include merged nodes, that is, also include phrases that from the same dup_set 
         extended_phrases_merged = set()
         for phrase in extended_phrases:
-            idx_phrase = [idx for idx, dup_set in enumerate(dup_sets) if(phrase in dup_set)]   # the set where phrase in
+            idx_phrase = [idx for idx, dup_set in enumerate(dup_sets) if(phrase in dup_set)]   # idx_phrase[0]: idx of the set where phrase in
             if(len(idx_phrase) > 0):
-                extended_phrases_merged = extended_phrases_merged | dup_sets[idx_phrase[0]]
+                extended_phrases_merged = extended_phrases_merged | dup_sets[idx_phrase[0]]    # merge sets
                 extended_phrases_merged.remove(phrase)
         extended_phrases.extend(list(extended_phrases_merged))
         introduced_phrases = list(set(extended_phrases) - set(question_phrases_text))
@@ -278,15 +289,17 @@ def find_common_mapping(G, question_phrases_text):
 
 def inclusion_best_match(query, choices):
     if (utils.full_process(query) and choices != []):  # only exectute when query is valid. To avoid WARNING:root:Applied processor reduces input query to empty string, all comparisons will have score 0.
-        inclusion_phrases = [simi_phrase for (simi_phrase, similarity) in process.extractBests(query, choices, scorer=fuzz.token_set_ratio) if similarity ==100]  # match '1977 film' and '1977', but will not match substring 'woman' and 'businesswoman', avid noise such as 'music' and 'us'
+        inclusion_phrases = [simi_phrase for (simi_phrase, similarity) in process.extractBests(query, choices, scorer=fuzz.token_set_ratio) if similarity ==100]  # match '1977 film' and '1977', but will not match substring 'woman' and 'businesswoman', avid nosiy such as 'music' and 'us'
         if(inclusion_phrases!= []):
             simi_phrase, similarity = process.extractOne(query, inclusion_phrases, scorer=fuzz.ratio) # most similar   
-            if(similarity >= 50):    
-                return simi_phrase
-            else:
-                return None
-    else:
-        return None
+            query_len = len(query.split())
+            simi_phrase_len = len(simi_phrase.split())
+            if(query_len > 0 and simi_phrase_len > 0):
+                len_ratio = min(query_len/simi_phrase_len , simi_phrase_len/query_len)
+                if(similarity >= len_ratio * 100):    # similarity of 'book' and 'second companion book' is 32 < 1/3 * 100
+                    return simi_phrase
+ 
+    return None
         
 def dedup_nodes_in_graph(G, grounded):
     def find_inclusion_duplicates(contains_dupes): 
@@ -302,8 +315,9 @@ def dedup_nodes_in_graph(G, grounded):
                 elif(len(idx_inclusion_similar_phrase) > 0 and len(idx_phrase) == 0):
                     dup_sets[idx_inclusion_similar_phrase[0]].add(phrase)
                 elif(len(idx_inclusion_similar_phrase) > 0 and len(idx_phrase) > 0):
-                    dup_sets[idx_phrase[0]] = dup_sets[idx_phrase[0]] | dup_sets[idx_inclusion_similar_phrase[0]]
-                    dup_sets.pop(idx_inclusion_similar_phrase[0])
+                    if(idx_phrase[0] != idx_inclusion_similar_phrase[0]):
+                        dup_sets[idx_phrase[0]] = dup_sets[idx_phrase[0]] | dup_sets[idx_inclusion_similar_phrase[0]]
+                        dup_sets.pop(idx_inclusion_similar_phrase[0])
                 elif(len(idx_inclusion_similar_phrase) == 0 and len(idx_phrase) == 0):
                     dup_sets.append(set([phrase, inclusion_similar_phrase]))
                 else:
@@ -404,9 +418,18 @@ def basic_normalize(s):
     def white_space_fix(text):
         return ' '.join(text.split())
 
-    def replace_sentence_end(text):
-        exclude = set(['.', '?'])
-        return ''.join(ch if ch not in exclude  else ',' for ch in str(text))
+    def replace_special_punc(text):
+        sentence_end = set(['.', '?', '!'])
+        chs = []
+        for ch in str(text):
+            if ch in sentence_end:
+                chs.append(',')
+            elif ch == '-':
+                chs.append(' ')
+            else:
+                chs.append(ch)
+        
+        return ''.join(chs)
 
 #     def remove_stop_words(text):
 #         all_stopwords = set(nlp.Defaults.stop_words)
@@ -416,7 +439,7 @@ def basic_normalize(s):
                         "What", "When", 'Where', "Which", "Who", "Whom", "Whose", "Why", "How", "Whether"])
         return ' '.join(word for word in text.split() if word not in wh_words) 
 
-    return white_space_fix(remove_wh_words(replace_sentence_end(str(s))))
+    return white_space_fix(remove_wh_words(replace_special_punc(str(s))))
 
 def _normalize_text(s):
     return basic_normalize(remove_articles(remove_punc(lower(str(s)))))

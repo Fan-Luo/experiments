@@ -1234,14 +1234,13 @@ class hotpotqa(pl.LightningModule):
                         sp_sent_pred.extend([(para_sents_offset[para_idx]+sent).item() for sent in evidence_candidates[para_idx.item()]]) 
                 for idx, sp_para in enumerate(sp_para_pred):
                     sp_para_pred[idx] = sp_para_map[sp_para.item()]
+                sp_para_pred = sp_para_pred.tolist()
             elif(sp_para_pred.numel()==1 and sp_para_pred.item() in evidence_candidates):
                 sp_sent_pred = [(para_sents_offset[sp_para_pred]+sent).item() for sent in evidence_candidates[sp_para_pred.item()]]
                 sp_para_pred = [sp_para_map[sp_para_pred.item()]]
  
             for idx, sp_sent in enumerate(sp_sent_pred):
                 sp_sent_pred[idx] = sp_sent_map[sp_sent]
-
-            sp_para_pred = sp_para_pred.tolist()
  
         return (answers, sp_sent_pred, sp_para_pred)
 
